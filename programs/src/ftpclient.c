@@ -1,6 +1,7 @@
 #include <arpa/inet.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <ifaddrs.h>
 #include <netdb.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -12,10 +13,6 @@
 #define MINIMUM_ARGC 3
 #define DEFAULT_COMMAND_PORT 21
 #define DEFAULT_DATA_PORT 20
-
-#define SEND_LITERAL_COMMAND_READ_RESPONSE(socket, command, args, response)\
-	send_command_read_response(socket, command, sizeof(command), args,\
-		&response);
 
 #define MAKE_COMMAND_FROM_LITERAL(var, command, str_args)\
 	command_t var;\
@@ -41,6 +38,9 @@ typedef uint64_t status_t;
 #define ACCEPTING_ERROR     9
 #define LOG_IN_ERROR        10
 #define SERVICE_AVAILIBILITY_ERROR 11
+#define NO_IP_ADDRESSES 12
+#define GET_NAME_ERROR 13
+#define MEMORY_ERROR 14
 
 #define RESTART "110"
 #define SERVICE_READY_IN "120"
@@ -86,8 +86,10 @@ typedef struct
 {
 	int command_socket;
 	int log_file;
+	char *ip4;
+	char *ip6;
 	uint8_t passive_mode;
-	uint16_t data_port;
+	uint8_t ipv6_mode;
 } session_t;
 
 typedef struct
@@ -98,8 +100,12 @@ typedef struct
 } command_t;
 
 status_t parse_command_line(int argc, char *argv[], uint16_t *port);
+status_t initialize_session(session_t *session, char *host, uint16_t port);
 status_t make_connection(int *sock, struct hostent *host, uint16_t port);
 status_t open_log_file(int *fd, char *filename);
+status_t get_ips(session_t *session);
+status_t try_set_hostname(struct ifaddrs *ifa, char **hostptr, size_t sockaddr_len,
+	char *localhost);
 status_t do_session(session_t *sesson);
 
 status_t read_initial_response(session_t *session);
@@ -107,6 +113,7 @@ status_t log_in(session_t *session);
 status_t cwd_command(session_t *session, string_t *line);
 status_t cdup_command(session_t *session);
 status_t quit_command(session_t *session);
+status_t passive_command(session_t *session);
 
 status_t send_command(session_t *session, command_t *command);
 status_t read_entire_response(session_t *sesson, string_t *response);
@@ -128,7 +135,6 @@ int main(int argc, char *argv[])
 		goto exit0;
 	}
 
-
 	port = htons(port);
 	struct hostent *host = gethostbyname(argv[1]);
 
@@ -146,15 +152,31 @@ int main(int argc, char *argv[])
 		goto exit1;
 	}
 
-	session.passive_mode = 0;
-	session.data_port = 20;
-
-	error = do_session(&session);
+	error = get_ips(&session);
 	if (error)
 	{
 		goto exit2;
 	}
 
+	if (session.ip4 == NULL && session.ip6 == NULL)
+	{
+		printf("Could not find local IPs. Defaulting to passive mode.\n");
+		session.passive_mode = 1;
+	}
+	else
+	{
+		session.passive_mode = 0;
+	}
+
+	error = do_session(&session);
+	if (error)
+	{
+		goto exit3;
+	}
+
+exit3:
+	free(session.ip4);
+	free(session.ip6);
 exit2:
 	close(session.log_file);
 exit1:
@@ -223,6 +245,86 @@ status_t open_log_file(int *fd, char *filename)
 	return SUCCESS;
 }
 
+status_t get_ips(session_t *session)
+{
+	status_t error = SUCCESS;
+	session->ip4 = NULL;
+	session->ip6 = NULL;
+	
+	struct ifaddrs *ifaddr;
+	if (getifaddrs(&ifaddr) < 0)
+	{
+		goto exit0;
+	}
+
+	struct ifaddrs *ifa;
+	for (ifa = ifaddr; ifa != NULL; ifa = ifa->ifa_next)
+	{
+		if (ifa->ifa_addr->sa_family == AF_INET && session->ip4 == NULL)
+		{
+			error = try_set_hostname(ifa, &session->ip4, sizeof(struct sockaddr_in),
+				"127.0.0.1");
+			if (error)
+			{
+				free(session->ip6);
+				goto exit1;
+			}
+		}
+		else if (ifa->ifa_addr->sa_family == AF_INET6 && session->ip6 == NULL)
+		{
+			error = try_set_hostname(ifa, &session->ip6, sizeof(struct sockaddr_in6),
+				"::1");
+			if (error)
+			{
+				free(session->ip4);
+				goto exit1;
+			}
+		}
+	}
+
+exit1:
+	freeifaddrs(ifaddr);
+exit0:
+	return error;
+}
+
+status_t try_set_hostname(struct ifaddrs *ifa, char **hostptr, size_t sockaddr_len, char *localhost)
+{
+	status_t error = SUCCESS;
+
+	char host[NI_MAXHOST];
+	int result = getnameinfo
+	(
+		ifa->ifa_addr,
+		sockaddr_len,
+		host,
+		NI_MAXHOST,
+		NULL,
+		0,
+		NI_NUMERICHOST
+	);
+
+	if (result != 0)
+	{
+		error = GET_NAME_ERROR;
+		goto exit0;
+	}
+
+	if (strcmp(host, localhost) != 0)
+	{
+		*hostptr = malloc(NI_MAXHOST);
+		if (*hostptr == NULL)
+		{
+			error = MEMORY_ERROR;
+			goto exit0;
+		}
+		strcpy(*hostptr, host);
+	}
+
+exit0:
+	return error;
+}
+
 status_t do_session(session_t *session)
 {
 	status_t error;
@@ -261,6 +363,10 @@ status_t do_session(session_t *session)
 		else if (COMMAND_CONDITIONAL(c_str, length, "quit"))
 		{
 			error = quit_command(session);
+		}
+		else if (COMMAND_CONDITIONAL(c_str, length, "passive"))
+		{
+			error = passive_command(session);
 		}
 		else
 		{
@@ -427,6 +533,27 @@ status_t quit_command(session_t *session)
 
 exit0:
 	string_uninitialize(&response);
+	return error;
+}
+
+status_t passive_command(session_t *session)
+{
+	status_t error = SUCCESS;
+
+	printf("Passive mode is now ");
+	if (session->passive_mode)
+	{
+		printf("off");
+		session->passive_mode = 0;
+	}
+	else
+	{
+		printf("on");
+		session->passive_mode = 1;
+	}
+	
+	printf(".\n");
+
 	return error;
 }
 
