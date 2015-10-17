@@ -1,9 +1,11 @@
 #include <arpa/inet.h>
-#include <netdb.h>
 #include <errno.h>
+#include <fcntl.h>
+#include <netdb.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
+#include <time.h>
 
 #include "string_t.h"
 
@@ -15,6 +17,12 @@
 	send_command_read_response(socket, command, sizeof(command), args,\
 		&response);
 
+#define MAKE_COMMAND_FROM_LITERAL(var, command, str_args)\
+	command_t var;\
+	var.identifier = command;\
+	var.ident_n = sizeof command;\
+	var.args = str_args
+
 #define COMMAND_CONDITIONAL(c_str, length, command)\
 	length >= sizeof command - 1 && bool_memcmp(c_str, command, sizeof command - 1)
 	
@@ -22,15 +30,17 @@
 typedef uint64_t status_t;
 #define SUCCESS             0
 #define BAD_COMMAND_LINE    1
-#define SOCKET_OPEN_ERROR   2
-#define SOCKET_CLOSE_ERROR  3
-#define SOCKET_WRITE_ERROR  4
-#define SOCKET_READ_ERROR   5
-#define CONNECTION_ERROR    6
-#define READ_ERROR          7
-#define ACCEPTING_ERROR     8
-#define LOG_IN_ERROR        9
-#define SERVICE_AVAILIBILITY_ERROR 10
+#define FILE_OPEN_ERROR     2
+#define FILE_SEEK_ERROR     3
+#define SOCKET_OPEN_ERROR   3
+#define SOCKET_CLOSE_ERROR  4
+#define SOCKET_WRITE_ERROR  5
+#define SOCKET_READ_ERROR   6
+#define CONNECTION_ERROR    7
+#define READ_ERROR          8
+#define ACCEPTING_ERROR     9
+#define LOG_IN_ERROR        10
+#define SERVICE_AVAILIBILITY_ERROR 11
 
 #define RESTART "110"
 #define SERVICE_READY_IN "120"
@@ -72,25 +82,41 @@ typedef uint64_t status_t;
 #define FILE_ACTION_ABORTED "552"
 #define FILE_NAME_NOT_ALLOWED "553"
 
+typedef struct
+{
+	int command_socket;
+	int log_file;
+	uint8_t passive_mode;
+	uint16_t data_port;
+} session_t;
+
+typedef struct
+{
+	char *identifier;
+	size_t ident_n;
+	string_t *args;
+} command_t;
+
 status_t parse_command_line(int argc, char *argv[], uint16_t *port);
 status_t make_connection(int *sock, struct hostent *host, uint16_t port);
-status_t do_session(int command_socket, struct hostent *host);
+status_t open_log_file(int *fd, char *filename);
+status_t do_session(session_t *sesson);
 
-status_t read_initial_response(int command_socket);
-status_t log_in(int command_socket);
-status_t cwd_command(int command_socket, string_t *line);
-status_t cdup_command(int command_socket);
-status_t quit_command(int command_socket);
+status_t read_initial_response(session_t *session);
+status_t log_in(session_t *session);
+status_t cwd_command(session_t *session, string_t *line);
+status_t cdup_command(session_t *session);
+status_t quit_command(session_t *session);
 
-status_t send_command(int socket, char *ident, size_t ident_n, string_t *args);
-status_t read_entire_response(int socket, string_t *response);
-status_t send_command_read_response(int socket, char *ident, size_t ident_n,
-	string_t *args, string_t *response);
+status_t send_command(session_t *session, command_t *command);
+status_t read_entire_response(session_t *sesson, string_t *response);
+status_t send_command_read_response(session_t *session, command_t *command, string_t *response);
 status_t read_single_line(int socket, string_t *line);
 status_t read_remaining_lines(int socket, string_t *response);
 status_t read_single_character(int socket, char *c);
 uint8_t matches_code(string_t *response, char *code);
 uint8_t bool_memcmp(char *s1, char *s2, size_t n);
+status_t write_log(session_t *session, char *message, size_t length);
 
 int main(int argc, char *argv[])
 {
@@ -102,24 +128,37 @@ int main(int argc, char *argv[])
 		goto exit0;
 	}
 
+
 	port = htons(port);
 	struct hostent *host = gethostbyname(argv[1]);
-	int control_socket;
 
-	error = make_connection(&control_socket, host, port);
+	session_t session;
+	error = make_connection(&session.command_socket, host, port);
 	if (error)
 	{
+		printf("Could not connect to the specified host.\n");
 		goto exit0;
 	}
 
-	error = do_session(control_socket, host);
+	error = open_log_file(&session.log_file, argv[2]);
 	if (error)
 	{
 		goto exit1;
 	}
 
+	session.passive_mode = 0;
+	session.data_port = 20;
+
+	error = do_session(&session);
+	if (error)
+	{
+		goto exit2;
+	}
+
+exit2:
+	close(session.log_file);
 exit1:
-	close(control_socket);
+	close(session.command_socket);
 exit0:
 	return error;
 }
@@ -173,17 +212,28 @@ status_t make_connection(int *sock, struct hostent *host, uint16_t port)
 	return SUCCESS;
 }
 
-status_t do_session(int command_socket, struct hostent *host)
+status_t open_log_file(int *fd, char *filename)
+{
+	if ((*fd = open(filename, O_WRONLY | O_CREAT | O_APPEND, 0600)) < 0)
+	{
+		printf("Could not open log file.\n");
+		return FILE_OPEN_ERROR;
+	}
+
+	return SUCCESS;
+}
+
+status_t do_session(session_t *session)
 {
 	status_t error;
 
-	error = read_initial_response(command_socket);
+	error = read_initial_response(session);
 	if (error)
 	{
 		goto exit0;
 	}
 
-	error = log_in(command_socket);
+	error = log_in(session);
 	if (error)
 	{
 		goto exit0;
@@ -202,15 +252,15 @@ status_t do_session(int command_socket, struct hostent *host)
 
 		if (COMMAND_CONDITIONAL(c_str, length, "cd "))
 		{
-			error = cwd_command(command_socket, &line);
+			error = cwd_command(session, &line);
 		}
 		else if (COMMAND_CONDITIONAL(c_str, length, "cdup"))
 		{
-			error = cdup_command(command_socket);
+			error = cdup_command(session);
 		}
 		else if (COMMAND_CONDITIONAL(c_str, length, "quit"))
 		{
-			error = quit_command(command_socket);
+			error = quit_command(session);
 		}
 		else
 		{
@@ -224,14 +274,14 @@ exit0:
 	return error;
 }
 
-status_t read_initial_response(int command_socket)
+status_t read_initial_response(session_t *session)
 {
 	status_t error;
 
 	string_t response;
 	string_initialize(&response);
 
-	error = read_entire_response(command_socket, &response);
+	error = read_entire_response(session, &response);
 	if (error)
 	{
 		goto exit0;
@@ -240,7 +290,7 @@ status_t read_initial_response(int command_socket)
 	if (matches_code(&response, SERVICE_READY_IN))
 	{
 		char_vector_clear(&response);
-		error = read_entire_response(command_socket, &response);
+		error = read_entire_response(session, &response);
 		if (error)
 		{
 			goto exit0;
@@ -258,7 +308,7 @@ exit0:
 	return error;
 }
 
-status_t log_in(int command_socket)
+status_t log_in(session_t *session)
 {
 	status_t error;
 
@@ -268,8 +318,8 @@ status_t log_in(int command_socket)
 	
 	printf("Username: ");
 	string_getline(&line, stdin);
-	error = SEND_LITERAL_COMMAND_READ_RESPONSE(command_socket, "USER", &line,
-		response);
+	MAKE_COMMAND_FROM_LITERAL(username_command, "USER", &line);
+	error = send_command_read_response(session, &username_command, &response);
 	if (error)
 	{
 		goto exit0;
@@ -280,8 +330,8 @@ status_t log_in(int command_socket)
 		printf("Password: ");
 		string_getline(&line, stdin);
 		char_vector_clear(&response);
-		error = SEND_LITERAL_COMMAND_READ_RESPONSE(command_socket, "PASS", &line,
-			response);
+		MAKE_COMMAND_FROM_LITERAL(password_command, "PASS", &line);
+		error = send_command_read_response(session, &password_command, &response);
 		if (error)
 		{
 			goto exit0;
@@ -305,7 +355,7 @@ exit0:
 	return error;
 }
 
-status_t cwd_command(int command_socket, string_t *line)
+status_t cwd_command(session_t *session, string_t *line)
 {
 	status_t error;
 	char_vector_remove(line, 0);
@@ -315,8 +365,9 @@ status_t cwd_command(int command_socket, string_t *line)
 	string_t response;
 	string_initialize(&response);
 
-	error = SEND_LITERAL_COMMAND_READ_RESPONSE(command_socket, "CWD", line,
-		response);
+	MAKE_COMMAND_FROM_LITERAL(command, "CWD", line);
+
+	error = send_command_read_response(session, &command, &response);
 	if (error)
 	{
 		goto exit0;
@@ -333,16 +384,16 @@ exit0:
 	return error;
 }
 
-status_t cdup_command(int command_socket)
+status_t cdup_command(session_t *session)
 {
 	status_t error;
 
-	string_t empty, response;
-	string_initialize(&empty);
+	string_t response;
 	string_initialize(&response);
 
-	error = SEND_LITERAL_COMMAND_READ_RESPONSE(command_socket, "CDUP", &empty,
-		response);
+	MAKE_COMMAND_FROM_LITERAL(command, "CDUP", NULL);
+
+	error = send_command_read_response(session, &command, &response);
 	if (error)
 	{
 		goto exit0;
@@ -355,67 +406,67 @@ status_t cdup_command(int command_socket)
 	}
 
 exit0:
-	string_uninitialize(&empty);
 	string_uninitialize(&response);
 	return error;
 }
 
-status_t quit_command(int command_socket)
+status_t quit_command(session_t *session)
 {
 	status_t error;
 
-	string_t empty, response;
-	string_initialize(&empty);
+	string_t response;
 	string_initialize(&response);
 
-	error = SEND_LITERAL_COMMAND_READ_RESPONSE(command_socket, "QUIT", &empty,
-		response);
+	MAKE_COMMAND_FROM_LITERAL(command, "QUIT", NULL);
 
+	error = send_command_read_response(session, &command, &response);
 	if (error)
 	{
 		goto exit0;
 	}
 
 exit0:
-	string_uninitialize(&empty);
 	string_uninitialize(&response);
 	return error;
 }
 
-status_t send_command(int socket, char *ident, size_t ident_n, string_t *args)
+status_t send_command(session_t *session, command_t *command)
 {
 	status_t error = SUCCESS;
 
-	string_t command;
-	string_initialize(&command);
+	string_t command_string;
+	string_initialize(&command_string);
 	//subtract one because the '\0' is unnecessary
-	string_assign_from_char_array_with_size(&command, ident, ident_n - 1);
-	if (string_length(args) > 0)
+	string_assign_from_char_array_with_size(&command_string,
+		command->identifier, command->ident_n - 1);
+	if (command->args != NULL)
 	{
-		string_concatenate_char_array(&command, " ");
-		string_concatenate(&command, args);
+		string_concatenate_char_array(&command_string, " ");
+		string_concatenate(&command_string, command->args);
 	}
-	string_concatenate_char_array(&command, "\r\n");
+	string_concatenate_char_array(&command_string, "\r\n");
 
-	if (write(socket, string_c_str(&command), string_length(&command)) < 0)
+	if (write(session->command_socket,
+	          string_c_str(&command_string),
+	          string_length(&command_string)) < 0)
 	{
 		error = SOCKET_WRITE_ERROR;
 		goto exit0;
 	}
 
 exit0:
-	string_uninitialize(&command);
+	string_uninitialize(&command_string);
 	return error;
 }
 
-status_t read_entire_response(int socket, string_t *response)
+status_t read_entire_response(session_t *session, string_t *response)
 {
 	status_t error;
 
 	char c;
 	int i;
 
-	error = read_single_line(socket, response);
+	error = read_single_line(session->command_socket, response);
 	if (error)
 	{
 		goto exit0;
@@ -423,14 +474,17 @@ status_t read_entire_response(int socket, string_t *response)
 
 	if (char_vector_get(response, 3) == '-')
 	{
-		error = read_remaining_lines(socket, response);
+		error = read_remaining_lines(session->command_socket, response);
 		if (error)
 		{
 			goto exit0;
 		}
 	}
 
-	printf("%s", string_c_str(response));
+	char *c_str = string_c_str(response);
+	printf("%s", c_str);
+	
+	//error = write_log(session, c_str, string_length(response));
 
 	if (matches_code(response, SERVICE_NOT_AVAILABLE))
 	{
@@ -442,17 +496,21 @@ exit0:
 	return error;
 }
 
-status_t send_command_read_response(int socket, char *ident, size_t ident_n,
-	string_t *args, string_t *response)
+status_t send_command_read_response(session_t *session, command_t *command,
+	string_t *response)
 {
 	status_t error;
-	error = send_command(socket, ident, ident_n, args);
+	error = send_command(session, command);
 	if (error)
 	{
 		goto exit0;
 	}
 
-	error = read_entire_response(socket, response);
+	error = read_entire_response(session, response);
+	if (error)
+	{
+		goto exit0;
+	}
 
 exit0:
 	return error;
@@ -539,3 +597,28 @@ uint8_t bool_memcmp(char *s1, char *s2, size_t n)
 {
 	return memcmp(s1, s2, n) == 0;
 }
+
+/*
+status_t write_log(session_t *session, char *message, size_t length)
+{
+	status_t error;
+	time_t time = time(NULL);
+	if (time < 0)
+	{
+		error = TIME_GET_ERROR;
+		goto exit0;
+	}
+
+	char *time_string = ctime(&time);
+	if (time_string == NULL)
+	{
+		error = TIME_STRING_ERROR;
+		goto exit0;
+	}
+
+	if (write(
+
+exit0:
+	return error;
+}
+*/
