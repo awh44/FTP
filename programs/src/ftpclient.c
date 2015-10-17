@@ -12,8 +12,8 @@
 #define DEFAULT_DATA_PORT 20
 
 #define SEND_LITERAL_COMMAND_READ_RESPONSE(socket, command, args, response)\
-	send_command(socket, command, sizeof(command), args);\
-	read_entire_response(socket, &response)
+	send_command_read_response(socket, command, sizeof(command), args,\
+		&response);
 
 #define COMMAND_CONDITIONAL(c_str, length, command)\
 	length >= sizeof command - 1 && bool_memcmp(c_str, command, sizeof command - 1)
@@ -79,13 +79,15 @@ status_t do_session(int command_socket, struct hostent *host);
 status_t read_initial_response(int command_socket);
 status_t log_in(int command_socket);
 status_t cwd_command(int command_socket, string_t *line);
+status_t cdup_command(int command_socket);
+status_t quit_command(int command_socket);
 
 status_t send_command(int socket, char *ident, size_t ident_n, string_t *args);
 status_t read_entire_response(int socket, string_t *response);
+status_t send_command_read_response(int socket, char *ident, size_t ident_n,
+	string_t *args, string_t *response);
 status_t read_single_line(int socket, string_t *line);
 status_t read_remaining_lines(int socket, string_t *response);
-status_t send_command_and_read_response(int socket, char *ident, size_t n,
-	string_t *args, string_t *response);
 status_t read_single_character(int socket, char *c);
 uint8_t matches_code(string_t *response, char *code);
 uint8_t bool_memcmp(char *s1, char *s2, size_t n);
@@ -198,16 +200,23 @@ status_t do_session(int command_socket, struct hostent *host)
 		char *c_str = string_c_str(&line);
 		size_t length = string_length(&line);
 
-		if (COMMAND_CONDITIONAL(c_str, length, "cd"))
+		if (COMMAND_CONDITIONAL(c_str, length, "cd "))
 		{
 			error = cwd_command(command_socket, &line);
+		}
+		else if (COMMAND_CONDITIONAL(c_str, length, "cdup"))
+		{
+			error = cdup_command(command_socket);
+		}
+		else if (COMMAND_CONDITIONAL(c_str, length, "quit"))
+		{
+			error = quit_command(command_socket);
 		}
 		else
 		{
 			printf("Unrecognized command.\n");
 		}
-	} while (string_compare_char_array(&line, "quit") != 0 ||
-			error == LOG_IN_ERROR || error == SERVICE_AVAILIBILITY_ERROR);
+	} while (string_compare_char_array(&line, "quit") != 0 || error);
 
 exit1:
 	string_uninitialize(&line);
@@ -299,7 +308,7 @@ exit0:
 
 status_t cwd_command(int command_socket, string_t *line)
 {
-	status_t error = SUCCESS;
+	status_t error;
 	char_vector_remove(line, 0);
 	char_vector_remove(line, 0);
 	string_trim(line);
@@ -307,7 +316,8 @@ status_t cwd_command(int command_socket, string_t *line)
 	string_t response;
 	string_initialize(&response);
 
-	error = SEND_LITERAL_COMMAND_READ_RESPONSE(command_socket, "CWD", line, response);
+	error = SEND_LITERAL_COMMAND_READ_RESPONSE(command_socket, "CWD", line,
+		response);
 	if (error)
 	{
 		goto exit0;
@@ -324,6 +334,56 @@ exit0:
 	return error;
 }
 
+status_t cdup_command(int command_socket)
+{
+	status_t error;
+
+	string_t empty, response;
+	string_initialize(&empty);
+	string_initialize(&response);
+
+	error = SEND_LITERAL_COMMAND_READ_RESPONSE(command_socket, "CDUP", &empty,
+		response);
+
+	if (error)
+	{
+		goto exit0;
+	}
+
+	if (matches_code(&response, NOT_LOGGED_IN))
+	{
+		error = LOG_IN_ERROR;
+		goto exit0;
+	}
+
+exit0:
+	string_uninitialize(&empty);
+	string_uninitialize(&response);
+	return error;
+}
+
+status_t quit_command(int command_socket)
+{
+	status_t error;
+
+	string_t empty, response;
+	string_initialize(&empty);
+	string_initialize(&response);
+
+	error = SEND_LITERAL_COMMAND_READ_RESPONSE(command_socket, "QUIT", &empty,
+		response);
+
+	if (error)
+	{
+		goto exit0;
+	}
+
+exit0:
+	string_uninitialize(&empty);
+	string_uninitialize(&response);
+	return error;
+}
+
 status_t send_command(int socket, char *ident, size_t ident_n, string_t *args)
 {
 	status_t error = SUCCESS;
@@ -332,8 +392,11 @@ status_t send_command(int socket, char *ident, size_t ident_n, string_t *args)
 	string_initialize(&command);
 	//subtract one because the '\0' is unnecessary
 	string_assign_from_char_array_with_size(&command, ident, ident_n - 1);
-	string_concatenate_char_array(&command, " ");
-	string_concatenate(&command, args);
+	if (string_length(args) > 0)
+	{
+		string_concatenate_char_array(&command, " ");
+		string_concatenate(&command, args);
+	}
 	string_concatenate_char_array(&command, "\r\n");
 
 	if (write(socket, string_c_str(&command), string_length(&command)) < 0)
@@ -376,6 +439,22 @@ status_t read_entire_response(int socket, string_t *response)
 		error = SERVICE_AVAILIBILITY_ERROR;
 		goto exit0;
 	}
+
+exit0:
+	return error;
+}
+
+status_t send_command_read_response(int socket, char *ident, size_t ident_n,
+	string_t *args, string_t *response)
+{
+	status_t error;
+	error = send_command(socket, ident, ident_n, args);
+	if (error)
+	{
+		goto exit0;
+	}
+
+	error = read_entire_response(socket, response);
 
 exit0:
 	return error;
