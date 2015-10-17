@@ -293,12 +293,11 @@ status_t log_in(int command_socket)
 		}
 	}
 
-	if (matches_code(&response, USER_LOGGED_IN))
+	if (!matches_code(&response, USER_LOGGED_IN))
 	{
+		error = LOG_IN_ERROR;
 		goto exit0;
 	}
-
-	error = LOG_IN_ERROR;
 
 exit0:
 	string_uninitialize(&response);
@@ -344,7 +343,6 @@ status_t cdup_command(int command_socket)
 
 	error = SEND_LITERAL_COMMAND_READ_RESPONSE(command_socket, "CDUP", &empty,
 		response);
-
 	if (error)
 	{
 		goto exit0;
@@ -509,7 +507,7 @@ status_t read_remaining_lines(int socket, string_t *response)
 
 		 line_c_str = string_c_str(&line);
 	} while (string_length(&line) < 4 ||
-	         memcmp(string_c_str(response), line_c_str, 3) != 0 ||
+	         !bool_memcmp(string_c_str(response), line_c_str, 3) ||
 			 line_c_str[3] != ' ');
 
 exit0:
@@ -534,7 +532,7 @@ status_t read_single_character(int socket, char *c)
 
 uint8_t matches_code(string_t *response, char *code)
 {
-	return memcmp(string_c_str(response), code, 3) == 0;
+	return bool_memcmp(string_c_str(response), code, 3);
 }
 
 uint8_t bool_memcmp(char *s1, char *s2, size_t n)
