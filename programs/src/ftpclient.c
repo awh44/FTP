@@ -12,8 +12,12 @@
 #define DEFAULT_DATA_PORT 20
 
 #define SEND_LITERAL_COMMAND_READ_RESPONSE(socket, command, args, response)\
-	send_command(socket, command, sizeof(command), &args);\
+	send_command(socket, command, sizeof(command), args);\
 	read_entire_response(socket, &response)
+
+#define COMMAND_CONDITIONAL(c_str, length, command)\
+	length >= sizeof command - 1 && bool_memcmp(c_str, command, sizeof command - 1)
+	
 
 typedef uint64_t status_t;
 #define SUCCESS             0
@@ -26,6 +30,7 @@ typedef uint64_t status_t;
 #define READ_ERROR          7
 #define ACCEPTING_ERROR     8
 #define LOG_IN_ERROR        9
+#define SERVICE_AVAILIBILITY_ERROR 10
 
 #define RESTART "110"
 #define SERVICE_READY_IN "120"
@@ -70,8 +75,11 @@ typedef uint64_t status_t;
 status_t parse_command_line(int argc, char *argv[], uint16_t *port);
 status_t make_connection(int *sock, struct hostent *host, uint16_t port);
 status_t do_session(int command_socket, struct hostent *host);
+
 status_t read_initial_response(int command_socket);
 status_t log_in(int command_socket);
+status_t cwd_command(int command_socket, string_t *line);
+
 status_t send_command(int socket, char *ident, size_t ident_n, string_t *args);
 status_t read_entire_response(int socket, string_t *response);
 status_t read_single_line(int socket, string_t *line);
@@ -80,6 +88,7 @@ status_t send_command_and_read_response(int socket, char *ident, size_t n,
 	string_t *args, string_t *response);
 status_t read_single_character(int socket, char *c);
 uint8_t matches_code(string_t *response, char *code);
+uint8_t bool_memcmp(char *s1, char *s2, size_t n);
 
 int main(int argc, char *argv[])
 {
@@ -173,7 +182,35 @@ status_t do_session(int command_socket, struct hostent *host)
 	}
 
 	error = log_in(command_socket);
+	if (error)
+	{
+		goto exit0;
+	}
 
+	string_t line;
+	string_initialize(&line);
+	do
+	{
+		printf("ftp> ");
+		string_getline(&line, stdin);
+		string_trim(&line);
+
+		char *c_str = string_c_str(&line);
+		size_t length = string_length(&line);
+
+		if (COMMAND_CONDITIONAL(c_str, length, "cd"))
+		{
+			error = cwd_command(command_socket, &line);
+		}
+		else
+		{
+			printf("Unrecognized command.\n");
+		}
+	} while (string_compare_char_array(&line, "quit") != 0 ||
+			error == LOG_IN_ERROR || error == SERVICE_AVAILIBILITY_ERROR);
+
+exit1:
+	string_uninitialize(&line);
 exit0:
 	return error;
 }
@@ -222,7 +259,7 @@ status_t log_in(int command_socket)
 	
 	printf("Username: ");
 	string_getline(&line, stdin);
-	error = SEND_LITERAL_COMMAND_READ_RESPONSE(command_socket, "USER", line,
+	error = SEND_LITERAL_COMMAND_READ_RESPONSE(command_socket, "USER", &line,
 		response);
 	if (error)
 	{
@@ -234,7 +271,7 @@ status_t log_in(int command_socket)
 		printf("Password: ");
 		string_getline(&line, stdin);
 		char_vector_clear(&response);
-		error = SEND_LITERAL_COMMAND_READ_RESPONSE(command_socket, "PASS", line,
+		error = SEND_LITERAL_COMMAND_READ_RESPONSE(command_socket, "PASS", &line,
 			response);
 		if (error)
 		{
@@ -257,6 +294,33 @@ status_t log_in(int command_socket)
 exit0:
 	string_uninitialize(&response);
 	string_uninitialize(&line);
+	return error;
+}
+
+status_t cwd_command(int command_socket, string_t *line)
+{
+	status_t error = SUCCESS;
+	char_vector_remove(line, 0);
+	char_vector_remove(line, 0);
+	string_trim(line);
+
+	string_t response;
+	string_initialize(&response);
+
+	error = SEND_LITERAL_COMMAND_READ_RESPONSE(command_socket, "CWD", line, response);
+	if (error)
+	{
+		goto exit0;
+	}
+
+	if (matches_code(&response, NOT_LOGGED_IN))
+	{
+		error = LOG_IN_ERROR;
+		goto exit0;
+	}
+
+exit0:
+	string_uninitialize(&response);
 	return error;
 }
 
@@ -306,6 +370,12 @@ status_t read_entire_response(int socket, string_t *response)
 	}
 
 	printf("%s", string_c_str(response));
+
+	if (matches_code(response, SERVICE_NOT_AVAILABLE))
+	{
+		error = SERVICE_AVAILIBILITY_ERROR;
+		goto exit0;
+	}
 
 exit0:
 	return error;
@@ -386,4 +456,9 @@ status_t read_single_character(int socket, char *c)
 uint8_t matches_code(string_t *response, char *code)
 {
 	return memcmp(string_c_str(response), code, 3) == 0;
+}
+
+uint8_t bool_memcmp(char *s1, char *s2, size_t n)
+{
+	return memcmp(s1, s2, n) == 0;
 }
