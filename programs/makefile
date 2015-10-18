@@ -1,5 +1,5 @@
 CC=gcc
-OPTS=-Iinclude/ -c -o$@ $?
+OPTS=-Iinclude/ -c -g -o$@ $?
 
 ftpclient: bin/ftpclient.o bin/string_t.o
 	$(CC) -o$@ bin/*

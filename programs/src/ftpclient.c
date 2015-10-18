@@ -97,7 +97,7 @@ typedef struct
 	char *ip4;
 	char *ip6;
 	uint8_t passive_mode;
-	uint8_t ipv6_mode;
+	uint8_t extended_mode;
 } session_t;
 
 typedef struct
@@ -125,8 +125,9 @@ status_t pwd_command(session_t *session);
 status_t quit_command(session_t *session);
 status_t port_command(session_t *session, int *listen_socket);
 status_t set_up_listen_socket(session_t *session, int *listen_socket, uint16_t
-	*listen_port);
+	*listen_port, int af, char *address);
 status_t passive_command(session_t *session);
+status_t extended_command(session_t *session);
 
 status_t send_command(session_t *session, command_t *command);
 status_t read_entire_response(session_t *sesson, string_t *response);
@@ -187,6 +188,8 @@ int main(int argc, char *argv[])
 		printf("Could not find local IPs. Defaulting to passive mode.\n");
 		session.passive_mode = 1;
 	}
+
+	session.extended_mode = 0;
 
 	error = do_session(&session);
 	if (error)
@@ -401,8 +404,13 @@ status_t do_session(session_t *session)
 		{
 			error = passive_command(session);
 		}
+		else if (bool_strcmp(c_str, "extended"))
+		{
+			error = extended_command(session);
+		}
 		else if (c_str[0] != '\0')
 		{
+			//'\0' check so user can enter empty lines
 			printf("Unrecognized command.\n");
 			error = SUCCESS;
 		}
@@ -624,7 +632,7 @@ status_t list_command(session_t *session, string_t *args, size_t length)
 	{
 		goto exit2;
 	}
-	printf("%s\n", string_c_str(&data));
+	printf("%s", string_c_str(&data));
 	
 	char_vector_clear(&response);
 	error = read_entire_response(session, &response);
@@ -642,6 +650,7 @@ status_t list_command(session_t *session, string_t *args, size_t length)
 
 exit2:
 	close(data_socket);
+	string_uninitialize(&data);
 exit1:
 	string_uninitialize(&response);
 	close(listen_socket);
@@ -679,8 +688,22 @@ status_t port_command(session_t *session, int *listen_socket)
 {
 	status_t error;
 
+	int af;
+	char *address;
+	if (session->extended_mode)
+	{
+		af = AF_INET6;
+		address = session->ip6;
+	}
+	else
+	{
+		af = AF_INET;
+		address = session->ip4;
+	}
+
 	uint16_t listen_port;
-	error = set_up_listen_socket(session, listen_socket, &listen_port);
+	error = set_up_listen_socket(session, listen_socket, &listen_port, af,
+		address);
 	if (error)
 	{
 		goto exit0;
@@ -688,25 +711,47 @@ status_t port_command(session_t *session, int *listen_socket)
 
 	string_t args;
 	string_initialize(&args);
-	string_assign_from_char_array(&args, session->ip4);
-	string_replace(&args, '.', ',');
-	string_concatenate_char_array(&args, ",");
+	
+	command_t command;
+	if (session->extended_mode)
+	{
+		string_assign_from_char_array(&args, "|2|");
+		string_concatenate_char_array(&args, session->ip6);
+		string_concatenate_char_array(&args, "|");
+		
+		//<= 65535, so can only have up to 5 digits (plus '\0')
+		char tmp[6];
+		sprintf(tmp, "%u", listen_port);
+		string_concatenate_char_array(&args, tmp);
+		string_concatenate_char_array(&args, "|");
 
-	uint8_t port_upper = listen_port / PORT_DIVISOR;
-	uint8_t port_lower = listen_port % PORT_DIVISOR;
+		MAKE_COMMAND_FROM_LITERAL(tmp_command, "EPRT", &args);
+		memcpy(&command, &tmp_command, sizeof command);
+	}
+	else
+	{
+		string_assign_from_char_array(&args, session->ip4);
+		string_replace(&args, '.', ',');
+		string_concatenate_char_array(&args, ",");
 
-	//uint8_t <= 255, so can only have up to 3 digits
-	char tmp[3];
-	sprintf(tmp, "%u", port_upper);
-	string_concatenate_char_array(&args, tmp);
-	string_concatenate_char_array(&args, ",");
-	sprintf(tmp, "%u", port_lower);
-	string_concatenate_char_array(&args, tmp);
+		uint8_t port_upper = listen_port / PORT_DIVISOR;
+		uint8_t port_lower = listen_port % PORT_DIVISOR;
+
+		//uint8_t <= 255, so can only have up to 3 digits (plus '\0')
+		char tmp[4];
+		sprintf(tmp, "%u", port_upper);
+		string_concatenate_char_array(&args, tmp);
+		string_concatenate_char_array(&args, ",");
+		sprintf(tmp, "%u", port_lower);
+		string_concatenate_char_array(&args, tmp);
+
+		MAKE_COMMAND_FROM_LITERAL(tmp_command, "PORT", &args);
+		memcpy(&command, &tmp_command, sizeof command);
+	}
 
 	string_t response;
 	string_initialize(&response);
 	
-	MAKE_COMMAND_FROM_LITERAL(command, "PORT", &args);
 	error = send_command_read_response(session, &command, &response);
 	if (error)
 	{
@@ -733,22 +778,33 @@ exit0:
 }
 
 status_t set_up_listen_socket(session_t *session, int *listen_socket, uint16_t
-	*listen_port)
+	*listen_port, int af, char *address)
 {
 	status_t error = SUCCESS;
 
-	*listen_socket = socket(AF_INET, SOCK_STREAM, 0);
+	if (session->extended_mode)
+	{
+		af = AF_INET6;
+		address = session->ip6;
+	}
+	else
+	{
+		af = AF_INET;
+		address = session->ip4;
+	}
+
+	*listen_socket = socket(af, SOCK_STREAM, 0);
 	if (*listen_socket < 0)
 	{
 		error = SOCKET_OPEN_ERROR;
 		goto exit_error0;
 	}
 
-	struct sockaddr_in sad;
+	struct sockaddr_in6 sad;
 	socklen_t size = sizeof sad;
 	memset(&sad, 0, size);
-	sad.sin_family = AF_INET;
-	inet_aton(session->ip4, &sad.sin_addr);
+	sad.sin6_family = af;
+	inet_pton(af, address, &sad.sin6_addr);
 
 	if (bind(*listen_socket, (struct sockaddr *) &sad, size) < 0)
 	{
@@ -817,6 +873,27 @@ status_t passive_command(session_t *session)
 		session->passive_mode = 1;
 	}
 	
+	printf(".\n");
+
+	return error;
+}
+
+status_t extended_command(session_t *session)
+{
+	status_t error = SUCCESS;
+
+	printf("Extended mode is now ");
+	if (session->extended_mode)
+	{
+		printf("off");
+		session->extended_mode = 0;
+	}
+	else
+	{
+		printf("on");
+		session->extended_mode = 1;
+	}
+
 	printf(".\n");
 
 	return error;
@@ -983,11 +1060,6 @@ status_t read_until_eof(int socket, string_t *response)
 	ssize_t bytes_read = read(socket, buff, sizeof buff);
 	while (bytes_read > 0)
 	{
-		int i;
-		for (i = 0; i < bytes_read; i++)
-		{
-			printf("%c", buff[i]);
-		}
 		string_concatenate_char_array_with_size(response, buff, bytes_read);
 		bytes_read = read(socket, buff, sizeof buff);
 	}
