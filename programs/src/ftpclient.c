@@ -46,6 +46,8 @@ typedef uint64_t status_t;
 #define BIND_ERROR 16
 #define LISTEN_ERROR 17
 #define SOCK_NAME_ERROR 18
+#define ACCEPT_ERROR 19
+#define NON_FATAL_ERROR 20
 
 #define RESTART "110"
 #define SERVICE_READY_IN "120"
@@ -119,6 +121,7 @@ status_t log_in(session_t *session);
 status_t cwd_command(session_t *session, string_t *args, size_t length);
 status_t cdup_command(session_t *session);
 status_t list_command(session_t *session, string_t *args, size_t length);
+status_t pwd_command(session_t *session);
 status_t quit_command(session_t *session);
 status_t port_command(session_t *session, int *listen_socket);
 status_t set_up_listen_socket(session_t *session, int *listen_socket, uint16_t
@@ -131,6 +134,7 @@ status_t send_command_read_response(session_t *session, command_t *command, stri
 status_t read_single_line(int socket, string_t *line);
 status_t read_remaining_lines(int socket, string_t *response);
 status_t read_single_character(int socket, char *c);
+status_t read_until_eof(int socket, string_t *response);
 uint8_t matches_code(string_t *response, char *code);
 uint8_t bool_memcmp(char *s1, char *s2, size_t n);
 uint8_t bool_strcmp(char *s1, char *s2);
@@ -298,13 +302,6 @@ status_t get_ips(session_t *session)
 		}
 	}
 
-	//In the PORT command, the IP address is comma delimited, so replace the
-	//periods now to prevent having to repeatedly redo it in the future
-	if (session->ip4 != NULL)
-	{
-		
-	}
-
 exit1:
 	freeifaddrs(ifaddr);
 exit0:
@@ -391,6 +388,10 @@ status_t do_session(session_t *session)
 		{
 			error = list_command(session, args, array_length);
 		}
+		else if (bool_strcmp(c_str, "pwd"))
+		{
+			error = pwd_command(session);
+		}
 		else if (bool_strcmp(c_str, "quit"))
 		{
 			error = quit_command(session);
@@ -400,9 +401,10 @@ status_t do_session(session_t *session)
 		{
 			error = passive_command(session);
 		}
-		else
+		else if (c_str[0] != '\0')
 		{
 			printf("Unrecognized command.\n");
+			error = SUCCESS;
 		}
 
 		size_t i = 0;
@@ -412,7 +414,7 @@ status_t do_session(session_t *session)
 		}
 		free(args);
 
-	} while (!quit && !error);
+	} while (!quit && (!error || error == NON_FATAL_ERROR));
 
 exit1:
 	string_uninitialize(&line);
@@ -527,6 +529,12 @@ status_t cwd_command(session_t *session, string_t *args, size_t array_length)
 		goto exit1;
 	}
 
+	if (!matches_code(&response, FILE_ACTION_COMPLETED))
+	{
+		error = NON_FATAL_ERROR;
+		goto exit1;
+	}
+
 exit1:
 	string_uninitialize(&response);
 exit0:
@@ -551,6 +559,12 @@ status_t cdup_command(session_t *session)
 	if (matches_code(&response, NOT_LOGGED_IN))
 	{
 		error = LOG_IN_ERROR;
+		goto exit0;
+	}
+
+	if (!matches_code(&response, COMMAND_OKAY))
+	{
+		error = NON_FATAL_ERROR;
 		goto exit0;
 	}
 
@@ -581,9 +595,83 @@ status_t list_command(session_t *session, string_t *args, size_t length)
 		goto exit1;
 	}
 
+	if (matches_code(&response, NOT_LOGGED_IN))
+	{
+		error = LOG_IN_ERROR;
+		goto exit1;
+	}
+
+	if (!matches_code(&response, TRANSFER_STARTING) &&
+		!matches_code(&response, FILE_STATUS_OKAY))
+	{
+		error = NON_FATAL_ERROR;
+		goto exit1;
+	}
+
+	struct sockaddr_in cad;
+	socklen_t cadlen = sizeof cad;
+	int data_socket = accept(listen_socket, (struct sockaddr *) &cad, &cadlen);
+	if (data_socket < 0)
+	{
+		error = ACCEPT_ERROR;
+		goto exit1;
+	}
+
+	string_t data;
+	string_initialize(&data);
+	error = read_until_eof(data_socket, &data);
+	if (error)
+	{
+		goto exit2;
+	}
+	printf("%s\n", string_c_str(&data));
+	
+	char_vector_clear(&response);
+	error = read_entire_response(session, &response);
+	if (error)
+	{
+		goto exit2;
+	}
+
+	if (!matches_code(&response, CONNECTION_OPEN_NO_TRANSFER) &&
+		!matches_code(&response, CLOSING_DATA_CONNECTION))
+	{
+		error = NON_FATAL_ERROR;
+		goto exit2;
+	}
+
+exit2:
+	close(data_socket);
 exit1:
 	string_uninitialize(&response);
+	close(listen_socket);
 exit0:
+	return error;
+}
+
+status_t pwd_command(session_t *session)
+{
+	status_t error;
+
+	string_t response;
+	string_initialize(&response);
+
+	MAKE_COMMAND_FROM_LITERAL(command, "PWD", NULL);
+
+	error = send_command_read_response(session, &command, &response);
+	if (error)
+	{
+		goto exit0;
+	}
+
+	if (!matches_code(&response, PATH_CREATED))
+	{
+		error = NON_FATAL_ERROR;
+		goto exit0;
+	}
+
+exit0:
+	string_uninitialize(&response);
 	return error;
 }
 
@@ -625,6 +713,18 @@ status_t port_command(session_t *session, int *listen_socket)
 		goto exit1;
 	}
 
+	if (matches_code(&response, NOT_LOGGED_IN))
+	{
+		error = LOG_IN_ERROR;
+		goto exit1;
+	}
+
+	if (!matches_code(&response, COMMAND_OKAY))
+	{
+		error = NON_FATAL_ERROR;
+		goto exit1;
+	}
+
 exit1:
 	string_uninitialize(&response);
 	string_uninitialize(&args);
@@ -641,8 +741,9 @@ status_t set_up_listen_socket(session_t *session, int *listen_socket, uint16_t
 	if (*listen_socket < 0)
 	{
 		error = SOCKET_OPEN_ERROR;
-		goto exit0;
+		goto exit_error0;
 	}
+
 	struct sockaddr_in sad;
 	socklen_t size = sizeof sad;
 	memset(&sad, 0, size);
@@ -652,28 +753,31 @@ status_t set_up_listen_socket(session_t *session, int *listen_socket, uint16_t
 	if (bind(*listen_socket, (struct sockaddr *) &sad, size) < 0)
 	{
 		error = BIND_ERROR;
-		close(*listen_socket);
-		goto exit1;
+		goto exit_error1;
 	}
 
 	if (listen(*listen_socket, 1) < 0)
 	{
 		error = LISTEN_ERROR;
-		goto exit1;
+		goto exit_error1;
 	}
 
 	struct sockaddr_in port_sad;
 	if (getsockname(*listen_socket, (struct sockaddr *) &port_sad, &size) < 0)
 	{
 		error = SOCK_NAME_ERROR;
-		goto exit1;
+		goto exit_error1;
 	}
 
-	*listen_port = port_sad.sin_port;
+	*listen_port = ntohs(port_sad.sin_port);
 
-exit1:
+	//equivalent to return SUCCESS (and don't close the socket)
+	goto exit_success;
+
+exit_error1:
 	close(*listen_socket);
-exit0:
+exit_error0:
+exit_success:
 	return error;
 }
 
@@ -864,16 +968,38 @@ exit0:
 status_t read_single_character(int socket, char *c)
 {
 	ssize_t bytes_read;
-	do
+	if ((bytes_read = read(socket, c, 1)) < 0)
 	{
-		if ((bytes_read = read(socket, c, 1)) < 0)
-		{
-			return SOCKET_READ_ERROR;
-		}
-
-	} while (bytes_read == 0);
+		return SOCKET_READ_ERROR;
+	}
 
 	return SUCCESS;
+}
+
+status_t read_until_eof(int socket, string_t *response)
+{
+	status_t error = SUCCESS;
+	char buff[512];
+	ssize_t bytes_read = read(socket, buff, sizeof buff);
+	while (bytes_read > 0)
+	{
+		int i;
+		for (i = 0; i < bytes_read; i++)
+		{
+			printf("%c", buff[i]);
+		}
+		string_concatenate_char_array_with_size(response, buff, bytes_read);
+		bytes_read = read(socket, buff, sizeof buff);
+	}
+
+	if (bytes_read < 0)
+	{
+		error = SOCKET_READ_ERROR;
+		goto exit0;
+	}
+
+exit0:
+	return error;
 }
 
 uint8_t matches_code(string_t *response, char *code)
