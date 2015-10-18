@@ -2,27 +2,28 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <ifaddrs.h>
+#include <limits.h>
 #include <netdb.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
+#include <sys/socket.h>
 #include <time.h>
 
 #include "string_t.h"
 
 #define MINIMUM_ARGC 3
 #define DEFAULT_COMMAND_PORT 21
-#define DEFAULT_DATA_PORT 20
+#define MAX_PORTS UINT16_MAX
+#define PRIVILEGED_PORTS 1024
+#define PORT_DIVISOR 256
 
 #define MAKE_COMMAND_FROM_LITERAL(var, command, str_args)\
 	command_t var;\
 	var.identifier = command;\
 	var.ident_n = sizeof command;\
 	var.args = str_args
-
-#define COMMAND_CONDITIONAL(c_str, length, command)\
-	length >= sizeof command - 1 && bool_memcmp(c_str, command, sizeof command - 1)
-	
 
 typedef uint64_t status_t;
 #define SUCCESS             0
@@ -41,6 +42,10 @@ typedef uint64_t status_t;
 #define NO_IP_ADDRESSES 12
 #define GET_NAME_ERROR 13
 #define MEMORY_ERROR 14
+#define ARGS_ERROR 15
+#define BIND_ERROR 16
+#define LISTEN_ERROR 17
+#define SOCK_NAME_ERROR 18
 
 #define RESTART "110"
 #define SERVICE_READY_IN "120"
@@ -85,6 +90,7 @@ typedef uint64_t status_t;
 typedef struct
 {
 	int command_socket;
+	int data_socket;
 	int log_file;
 	char *ip4;
 	char *ip6;
@@ -110,9 +116,13 @@ status_t do_session(session_t *sesson);
 
 status_t read_initial_response(session_t *session);
 status_t log_in(session_t *session);
-status_t cwd_command(session_t *session, string_t *line);
+status_t cwd_command(session_t *session, string_t *args, size_t length);
 status_t cdup_command(session_t *session);
+status_t list_command(session_t *session, string_t *args, size_t length);
 status_t quit_command(session_t *session);
+status_t port_command(session_t *session, int *listen_socket);
+status_t set_up_listen_socket(session_t *session, int *listen_socket, uint16_t
+	*listen_port);
 status_t passive_command(session_t *session);
 
 status_t send_command(session_t *session, command_t *command);
@@ -123,6 +133,8 @@ status_t read_remaining_lines(int socket, string_t *response);
 status_t read_single_character(int socket, char *c);
 uint8_t matches_code(string_t *response, char *code);
 uint8_t bool_memcmp(char *s1, char *s2, size_t n);
+uint8_t bool_strcmp(char *s1, char *s2);
+
 status_t write_log(session_t *session, char *message, size_t length);
 
 int main(int argc, char *argv[])
@@ -137,6 +149,8 @@ int main(int argc, char *argv[])
 
 	port = htons(port);
 	struct hostent *host = gethostbyname(argv[1]);
+
+	srand(time(NULL));
 
 	session_t session;
 	error = make_connection(&session.command_socket, host, port);
@@ -158,14 +172,16 @@ int main(int argc, char *argv[])
 		goto exit2;
 	}
 
-	if (session.ip4 == NULL && session.ip6 == NULL)
+	//try to default to non-passive mode (i.e., use PORT), but if have neither
+	//ip address, need to use passive mode
+	if (session.ip4 != NULL && session.ip6 != NULL)
 	{
-		printf("Could not find local IPs. Defaulting to passive mode.\n");
-		session.passive_mode = 1;
+		session.passive_mode = 0;
 	}
 	else
 	{
-		session.passive_mode = 0;
+		printf("Could not find local IPs. Defaulting to passive mode.\n");
+		session.passive_mode = 1;
 	}
 
 	error = do_session(&session);
@@ -214,7 +230,7 @@ status_t parse_command_line(int argc, char *argv[], uint16_t *port)
 
 status_t make_connection(int *sock, struct hostent *host, uint16_t port)
 {
-	if ((*sock = socket(PF_INET, SOCK_STREAM, 0)) < 0)
+	if ((*sock = socket(AF_INET, SOCK_STREAM, 0)) < 0)
 	{
 		return SOCKET_OPEN_ERROR;
 	}
@@ -282,6 +298,13 @@ status_t get_ips(session_t *session)
 		}
 	}
 
+	//In the PORT command, the IP address is comma delimited, so replace the
+	//periods now to prevent having to repeatedly redo it in the future
+	if (session->ip4 != NULL)
+	{
+		
+	}
+
 exit1:
 	freeifaddrs(ifaddr);
 exit0:
@@ -343,28 +366,37 @@ status_t do_session(session_t *session)
 
 	string_t line;
 	string_initialize(&line);
+	uint8_t quit = 0;
 	do
 	{
 		printf("ftp> ");
 		string_getline(&line, stdin);
 		string_trim(&line);
+		
+		size_t array_length;
+		string_t *args = string_split_skip_consecutive(&line, ' ',
+			&array_length, 1);
 
-		char *c_str = string_c_str(&line);
-		size_t length = string_length(&line);
+		char *c_str = string_c_str(args + 0);
 
-		if (COMMAND_CONDITIONAL(c_str, length, "cd "))
+		if (bool_strcmp(c_str, "cd"))
 		{
-			error = cwd_command(session, &line);
+			error = cwd_command(session, args, array_length);
 		}
-		else if (COMMAND_CONDITIONAL(c_str, length, "cdup"))
+		else if (bool_strcmp(c_str, "cdup"))
 		{
 			error = cdup_command(session);
 		}
-		else if (COMMAND_CONDITIONAL(c_str, length, "quit"))
+		else if (bool_strcmp(c_str, "ls"))
+		{
+			error = list_command(session, args, array_length);
+		}
+		else if (bool_strcmp(c_str, "quit"))
 		{
 			error = quit_command(session);
+			quit = 1;
 		}
-		else if (COMMAND_CONDITIONAL(c_str, length, "passive"))
+		else if (bool_strcmp(c_str, "passive"))
 		{
 			error = passive_command(session);
 		}
@@ -372,7 +404,15 @@ status_t do_session(session_t *session)
 		{
 			printf("Unrecognized command.\n");
 		}
-	} while (string_compare_char_array(&line, "quit") != 0 || error);
+
+		size_t i = 0;
+		for (i = 0; i < array_length; i++)
+		{
+			string_uninitialize(args + i);
+		}
+		free(args);
+
+	} while (!quit && !error);
 
 exit1:
 	string_uninitialize(&line);
@@ -461,32 +501,35 @@ exit0:
 	return error;
 }
 
-status_t cwd_command(session_t *session, string_t *line)
+status_t cwd_command(session_t *session, string_t *args, size_t array_length)
 {
-	status_t error;
-	char_vector_remove(line, 0);
-	char_vector_remove(line, 0);
-	string_trim(line);
+	status_t error = SUCCESS;
+	if (array_length < 2)
+	{
+		printf("Please include the directory to which to switch.\n");
+		goto exit0;
+	}
 
 	string_t response;
 	string_initialize(&response);
 
-	MAKE_COMMAND_FROM_LITERAL(command, "CWD", line);
+	MAKE_COMMAND_FROM_LITERAL(command, "CWD", args + 1);
 
 	error = send_command_read_response(session, &command, &response);
 	if (error)
 	{
-		goto exit0;
+		goto exit1;
 	}
 
 	if (matches_code(&response, NOT_LOGGED_IN))
 	{
 		error = LOG_IN_ERROR;
-		goto exit0;
+		goto exit1;
 	}
 
-exit0:
+exit1:
 	string_uninitialize(&response);
+exit0:
 	return error;
 }
 
@@ -513,6 +556,124 @@ status_t cdup_command(session_t *session)
 
 exit0:
 	string_uninitialize(&response);
+	return error;
+}
+
+status_t list_command(session_t *session, string_t *args, size_t length)
+{
+	status_t error;
+	
+	int listen_socket;
+	error = port_command(session, &listen_socket);
+	if (error)
+	{
+		goto exit0;
+	}
+	
+	string_t response;
+	string_initialize(&response);
+
+	MAKE_COMMAND_FROM_LITERAL(command, "LIST", length > 1 ? args + 1 : NULL);
+
+	error = send_command_read_response(session, &command, &response);
+	if (error)
+	{
+		goto exit1;
+	}
+
+exit1:
+	string_uninitialize(&response);
+exit0:
+	return error;
+}
+
+status_t port_command(session_t *session, int *listen_socket)
+{
+	status_t error;
+
+	uint16_t listen_port;
+	error = set_up_listen_socket(session, listen_socket, &listen_port);
+	if (error)
+	{
+		goto exit0;
+	}
+
+	string_t args;
+	string_initialize(&args);
+	string_assign_from_char_array(&args, session->ip4);
+	string_replace(&args, '.', ',');
+	string_concatenate_char_array(&args, ",");
+
+	uint8_t port_upper = listen_port / PORT_DIVISOR;
+	uint8_t port_lower = listen_port % PORT_DIVISOR;
+
+	//uint8_t <= 255, so can only have up to 3 digits
+	char tmp[3];
+	sprintf(tmp, "%u", port_upper);
+	string_concatenate_char_array(&args, tmp);
+	string_concatenate_char_array(&args, ",");
+	sprintf(tmp, "%u", port_lower);
+	string_concatenate_char_array(&args, tmp);
+
+	string_t response;
+	string_initialize(&response);
+	
+	MAKE_COMMAND_FROM_LITERAL(command, "PORT", &args);
+	error = send_command_read_response(session, &command, &response);
+	if (error)
+	{
+		goto exit1;
+	}
+
+exit1:
+	string_uninitialize(&response);
+	string_uninitialize(&args);
+exit0:
+	return error;
+}
+
+status_t set_up_listen_socket(session_t *session, int *listen_socket, uint16_t
+	*listen_port)
+{
+	status_t error = SUCCESS;
+
+	*listen_socket = socket(AF_INET, SOCK_STREAM, 0);
+	if (*listen_socket < 0)
+	{
+		error = SOCKET_OPEN_ERROR;
+		goto exit0;
+	}
+	struct sockaddr_in sad;
+	socklen_t size = sizeof sad;
+	memset(&sad, 0, size);
+	sad.sin_family = AF_INET;
+	inet_aton(session->ip4, &sad.sin_addr);
+
+	if (bind(*listen_socket, (struct sockaddr *) &sad, size) < 0)
+	{
+		error = BIND_ERROR;
+		close(*listen_socket);
+		goto exit1;
+	}
+
+	if (listen(*listen_socket, 1) < 0)
+	{
+		error = LISTEN_ERROR;
+		goto exit1;
+	}
+
+	struct sockaddr_in port_sad;
+	if (getsockname(*listen_socket, (struct sockaddr *) &port_sad, &size) < 0)
+	{
+		error = SOCK_NAME_ERROR;
+		goto exit1;
+	}
+
+	*listen_port = port_sad.sin_port;
+
+exit1:
+	close(*listen_socket);
+exit0:
 	return error;
 }
 
@@ -723,6 +884,11 @@ uint8_t matches_code(string_t *response, char *code)
 uint8_t bool_memcmp(char *s1, char *s2, size_t n)
 {
 	return memcmp(s1, s2, n) == 0;
+}
+
+uint8_t bool_strcmp(char *s1, char *s2)
+{
+	return strcmp(s1, s2) == 0;
 }
 
 /*
