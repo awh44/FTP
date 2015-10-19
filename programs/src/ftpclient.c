@@ -24,29 +24,27 @@
 	var.args = str_args
 
 typedef uint64_t status_t;
-#define SUCCESS             0
-#define BAD_COMMAND_LINE    1
-#define FILE_OPEN_ERROR     2
-#define FILE_SEEK_ERROR     3
-#define SOCKET_OPEN_ERROR   3
-#define SOCKET_CLOSE_ERROR  4
-#define SOCKET_WRITE_ERROR  5
-#define SOCKET_READ_ERROR   6
-#define CONNECTION_ERROR    7
-#define READ_ERROR          8
-#define ACCEPTING_ERROR     9
-#define LOG_IN_ERROR        10
-#define SERVICE_AVAILIBILITY_ERROR 11
-#define NO_IP_ADDRESSES 12
-#define GET_NAME_ERROR 13
-#define MEMORY_ERROR 14
-#define ARGS_ERROR 15
-#define BIND_ERROR 16
-#define LISTEN_ERROR 17
-#define SOCK_NAME_ERROR 18
-#define ACCEPT_ERROR 19
-#define NON_FATAL_ERROR 20
-#define HOST_ERROR 21
+#define SUCCESS                     0
+#define BAD_COMMAND_LINE            1
+#define FILE_OPEN_ERROR             2
+#define FILE_WRITE_ERROR            3
+#define SOCKET_OPEN_ERROR           4
+#define SOCKET_WRITE_ERROR          5
+#define SOCKET_READ_ERROR           6
+#define CONNECTION_ERROR            7
+#define BIND_ERROR                  8
+#define LISTEN_ERROR                9
+#define ACCEPT_ERROR               10
+#define SOCK_NAME_ERROR            11
+#define HOST_ERROR                 12
+#define MEMORY_ERROR               13
+#define ACCEPTING_ERROR            14
+#define LOG_IN_ERROR               15
+#define SERVICE_AVAILIBILITY_ERROR 16
+#define GET_NAME_ERROR             17
+#define TIME_GET_ERROR             18
+#define TIME_STRING_ERROR          19
+#define NON_FATAL_ERROR            20
 
 #define RESTART "110"
 #define SERVICE_READY_IN "120"
@@ -54,7 +52,7 @@ typedef uint64_t status_t;
 #define FILE_STATUS_OKAY "150"
 #define COMMAND_OKAY "200"
 #define NOT_IMPLEMENTED_SUPERFLUOUS "202"
-#define SYSTEM_STATUS "122"
+#define SYSTEM_STATUS "211"
 #define DIRECTORY_STATUS "212"
 #define FILE_STATUS "213"
 #define HELP_MESSAGE "214"
@@ -106,6 +104,7 @@ typedef struct
 	string_t *args;
 } command_t;
 
+//------------------------------SETUP FUNCTIONS--------------------------------
 /**
   * parses the command line, ensuring that it's valid and placing the port
   * number in port, if available.
@@ -133,45 +132,238 @@ status_t open_log_file(int *fd, char *filename);
 /**
   * gets the IPv4 and IPv6 IP addresses, if available, by walking the ifaddrs
   * list and sets them appropriately in session
-  * @param session - session object; ip4 and ip6 pointers will be set upon
-  * success
+  * @param session - session object; ip4 and ip6 pointers will be on success
   */
 status_t get_ips(session_t *session);
 
 /**
-  * helpter function for get_ips
+  * helpter function for get_ips; if the host can be retrieved from ifa and does
+  * not equal localhost, then *hostptr is malloc'd and set
+  * @param ifa       - the ifaddrs object to get the host name from
+  * @param hostptr   - pointer to a character pointer which will be malloc'c and
+  * 	contain the name of the host upont success
+  * @param len       - the size of a sockaddr object
+  * @param localhost - the localhost to ignore if the hostname equals
   */
-status_t try_set_hostname(struct ifaddrs *ifa, char **hostptr, size_t sockaddr_len,
+status_t try_set_hostname(struct ifaddrs *ifa, char **hostptr, size_t len,
 	char *localhost);
-status_t do_session(session_t *sesson);
 
+/**
+  * actually begins the user's session by reading initial response, logging in,
+  * and then continously reading the user's commands and interpreting them
+  * @param session - the user's session object, containing necessary info
+  */
+status_t do_session(session_t *session);
+//----------------------------END SETUP FUNCTIONS-------------------------------
+
+//-----------------------------COMMAND FUNCTIONS-------------------------------
+/**
+  * reads the initial response from the server after connecting
+  * @param session - the current session's object
+  */
 status_t read_initial_response(session_t *session);
+
+/**
+  *	completes the log in process on the connection contained in session,
+  *	including USER and PASS commands where appropriate
+  * @param session - the current session's object
+  */
 status_t log_in(session_t *session);
+
+/**
+  *	sends a CWD command and recognizes any errors that occur, using the command
+  *	socket in session and the command line args array of length length
+  * @param session - the current session's object
+  * @param args    - the arguments the user passed on the command line
+  * @param length  - the length of the args array
+  */
 status_t cwd_command(session_t *session, string_t *args, size_t length);
+
+/**
+  * sends a CDUP command and recognizes any errors that occur, using the command
+  * socket in session
+  */
 status_t cdup_command(session_t *session);
+
+/**
+  * sends a LIST command, including setup with PORT/PASV commands and
+  * recognizes any errors that occur. Uses the command socket in session and
+  * the command line args array of length length
+  * @param session - the current session's object
+  * @param args    - the arguments the user passed on the command line
+  * @param length  - the length of the args array
+
+  */
 status_t list_command(session_t *session, string_t *args, size_t length);
+
+/**
+  * actually sends the LIST command itself within the current session, using the
+  * arguemtns args
+  * @param session - the current session to use
+  * @param args    - the args to be passed to the server with the LIST command
+  */
 status_t send_list_command(session_t *session, string_t *args);
+
+/**
+  * sends a PWD command to the server in the current session
+  * @param session - the session in which to send the PWD command
+  */
 status_t pwd_command(session_t *session);
+
+/**
+  * sends a HELP command to the server in the current session
+  * @param session - the session in which to send the HELP command
+  * @param args    - the command line argument array
+  * @param length  - the length of the args array
+  */
+status_t help_command(session_t *session, string_t *args, size_t length);
+
+/**
+  * sends a QUIT command to the server in the current session to quit it
+  * @param session - the session in which to send the PWD command
+  */
 status_t quit_command(session_t *session);
+
+/**
+  * sends a PORT command, either PORT or EPRT, depending on the settings within
+  * session, returning the listening socket in listen_socket
+  * @param session       - the session in which to send the PORT commnand
+  * @param listen_socket - out param; is set to the socket to listen on
+  * 	afterward the PORT command
+  */
 status_t port_command(session_t *session, int *listen_socket);
+
+/**
+  * sends a PASV command, either PASV or EPASV, depending on the settings within
+  * session, returning the host and the port on the corresponding parameters
+  * @param session - the session in which to send the PASV command
+  * @param host    - out param; will contain the name of the host to which to
+  *		connect
+  * @param port    - out param; will contain the port to which to connect
+  */
 status_t pasv_command(session_t *session, string_t *host, uint16_t *port);
+
+/**
+  *	sets the passive flag in the session object; doesn't actually have to go to
+  *	the server
+  * @param session - the session object in which to set the flag
+  */
 status_t passive_command(session_t *session);
+
+/**
+  *	sets the extended flag in the session object; doesn't actually have to go to
+  *	the server
+  * @param session - the session object in which to set the flag
+  */
 status_t extended_command(session_t *session);
+
+/**
+  * helpter function for port_command; sets up a listening socket in the current
+  * session, using internet protocol af and address address, setting
+  * listen_socket and port appropriately when finished
+  */
 status_t set_up_listen_socket(session_t *session, int *listen_socket, uint16_t
 	*listen_port, int af, char *address);
+//---------------------------END COMMAND FUNCTIONS-----------------------------
 
+//-----------------------------SOCKET FUNCTIONS--------------------------------
+/**
+  *	sends the command given by command in the current session
+  * @param session - the session in which to send the command
+  * @param command - the command to send
+  */
 status_t send_command(session_t *session, command_t *command);
-status_t read_entire_response(session_t *sesson, string_t *response);
+
+/**
+  *	reads an entire response from the server (i.e., until \r\n or another
+  *	suitable end marker) into response
+  * @param session  - the session in which the response will be read
+  * @param response - out param; to where the response will be written. Must be
+  * 	initialized
+  */
+status_t read_entire_response(session_t *session, string_t *response);
+
+/**
+  * In session, performs a send_command of command and then reads the response
+  * into response using read_entire_response.
+  * @param session  - the session in which to perform the actions
+  * @param command  - the command to send
+  * @param response - out param; to where the response will be written. Must be
+  * 	initialized
+  */
 status_t send_command_read_response(session_t *session, command_t *command, string_t *response);
+
+/**
+  * reads from socket socket until a '\r\n' sequence is reached
+  * @param socket - socket from which to read
+  * @param line   - out param; the string into which to read. Must be initialized
+  */
 status_t read_single_line(int socket, string_t *line);
+
+/**
+  * after reading the first line, will continue reading other lines of a
+  * multi-line response from the server
+  * @param socket   - socket from which to read
+  * @param response - out param; the string into which to read. Must be initialized
+  */
 status_t read_remaining_lines(int socket, string_t *response);
+
+/**
+  *	reads a single character from the socket
+  * @param socket - socket from which to read
+  * @param c      - pointer to character into which to read
+  */
 status_t read_single_character(int socket, char *c);
+
+/**
+  * reads from the given socket utnil EOF is reached (i.e., read returns 0)
+  * @param socket - socket from which to read
+  * @param response - out param; the string into which to read. Must be initialized
+  */
 status_t read_until_eof(int socket, string_t *response);
+//----------------------------END SOCKET FUNCTIONS------------------------------
+
+//-----------------------------HELPER FUNCTIONS--------------------------------
+/**
+  * Determines if the response matches the three digit FTP code in its first
+  * three characters
+  * @param response - the response to check for a match
+  * @param code     - three digit FTP response code to match against
+  * @return true of the response matches the code
+  */
 uint8_t matches_code(string_t *response, char *code);
+
+/**
+  * Performs a boolean memory compare of s1 and s2 over n bytes, returning true
+  * of false as appropriate
+  * @param s1 - the first memory array to compare
+  * @param s2 - the second memory array to compare
+  * @param n  - the length of array to check
+  * @return true if the n first bytes of n1 and n2 ar the same
+  */
 uint8_t bool_memcmp(char *s1, char *s2, size_t n);
+
+/**
+  * Performs a strcmp and returns true if the result is 0, false otherwise
+  * @param s1 - the first string to compare
+  * @param s2 - the second string to compare
+  * @return true if s1's bytes are equal to s2's bytes, up to the first null
+  * 	terminator
+  */
 uint8_t bool_strcmp(char *s1, char *s2);
 
-status_t write_log(session_t *session, char *message, size_t length);
+/**
+  * logs the message of length into the log file given by session
+  * @param session - the session in which the message will be written
+  * @param message - the messsage to write to the log
+  * @param length  - the length of the message
+  */
+status_t write_log(session_t *session, string_t *message);
+
+status_t write_received_message_to_log(session_t *session, string_t *message);
+
+void print_error_message(status_t error);
+//----------------------------END HELPER FUNCTIONS------------------------------
 
 int main(int argc, char *argv[])
 {
@@ -200,30 +392,46 @@ int main(int argc, char *argv[])
 	error = get_ips(&session);
 	if (error)
 	{
+		printf("Could not get IP information.\n");
 		goto exit2;
 	}
 
 	//try to default to non-passive mode (i.e., use PORT), but if have neither
 	//ip address, need to use passive mode
-	if (session.ip4 != NULL && session.ip6 != NULL)
+	if (session.ip4 == NULL && session.ip6 == NULL)
 	{
-		printf("Starting in active mode.\n");
-		session.passive_mode = 0;
+		session.passive_mode = 1;
+		session.extended_mode = 0;
 	}
 	else
 	{
-		printf("Could not find local IPs. Defaulting to passive mode.\n");
-		session.passive_mode = 1;
+		//One of ip4 or ip6 is not NULL, so active mode is possible
+		session.passive_mode = 0;
+
+		if (session.ip4 == NULL)
+		{
+			session.extended_mode = 1;
+			printf("Could not find IPv4 address. Defaulting to extended mode.\n");
+		}
+		else
+		{
+			session.extended_mode = 0;
+			if (session.ip6 == NULL)
+			{
+				printf("Could not find IPv6 address. Defaulting to non-extended mode.\n");
+			}
+		}
 	}
 
-	session.extended_mode = 0;
-
+	//begin the session
 	error = do_session(&session);
 	if (error)
 	{
 		goto exit3;
 	}
 
+	//error handling using gotos and exit labels and cleanup. At the end, return
+	//the error from main for the shell to inspect
 exit3:
 	free(session.ip4);
 	free(session.ip6);
@@ -324,6 +532,8 @@ status_t get_ips(session_t *session)
 
 		if (ifa->ifa_addr->sa_family == AF_INET && session->ip4 == NULL)
 		{
+			//try to set ip4 from ifa, ignoring the address if it's the loopback
+			//address
 			error = try_set_hostname(ifa, &session->ip4, sizeof(struct sockaddr_in),
 				"127.0.0.1");
 			if (error)
@@ -334,6 +544,8 @@ status_t get_ips(session_t *session)
 		}
 		else if (ifa->ifa_addr->sa_family == AF_INET6 && session->ip6 == NULL)
 		{
+			//try to set ip6 from ifa, ignoring the address if it's the loopback
+			//address
 			error = try_set_hostname(ifa, &session->ip6, sizeof(struct sockaddr_in6),
 				"::1");
 			if (error)
@@ -412,12 +624,14 @@ status_t do_session(session_t *session)
 		string_getline(&line, stdin);
 		string_trim(&line);
 		
+		//split the input along space lines, treating any consecutive spaces as
+		//"one" space
 		size_t array_length;
 		string_t *args = string_split_skip_consecutive(&line, ' ',
 			&array_length, 1);
 
+		//Now determine the command type and execute it
 		char *c_str = string_c_str(args + 0);
-
 		if (bool_strcmp(c_str, "cd"))
 		{
 			error = cwd_command(session, args, array_length);
@@ -433,6 +647,10 @@ status_t do_session(session_t *session)
 		else if (bool_strcmp(c_str, "pwd"))
 		{
 			error = pwd_command(session);
+		}
+		else if (bool_strcmp(c_str, "help"))
+		{
+			error = help_command(session, args, array_length);
 		}
 		else if (bool_strcmp(c_str, "quit"))
 		{
@@ -451,8 +669,10 @@ status_t do_session(session_t *session)
 		{
 			//'\0' check so user can enter empty lines
 			printf("Unrecognized command.\n");
-			error = SUCCESS;
+			error = NON_FATAL_ERROR;
 		}
+
+		print_error_message(error);
 
 		size_t i = 0;
 		for (i = 0; i < array_length; i++)
@@ -462,6 +682,11 @@ status_t do_session(session_t *session)
 		free(args);
 
 	} while (!quit && (!error || error == NON_FATAL_ERROR));
+
+	if (error && error != NON_FATAL_ERROR)
+	{
+		printf("Fatal error. Exiting.\n");
+	}
 
 exit1:
 	string_uninitialize(&line);
@@ -476,12 +701,14 @@ status_t read_initial_response(session_t *session)
 	string_t response;
 	string_initialize(&response);
 
+	//Read the entirety of the response
 	error = read_entire_response(session, &response);
 	if (error)
 	{
 		goto exit0;
 	}
 
+	//If the response is an intermediary one, then read another response
 	if (matches_code(&response, SERVICE_READY_IN))
 	{
 		char_vector_clear(&response);
@@ -492,6 +719,7 @@ status_t read_initial_response(session_t *session)
 		}
 	}
 
+	//If the service is not ready, then need to indicate this
 	if (!matches_code(&response, SERVICE_READY))
 	{
 		error = ACCEPTING_ERROR;
@@ -923,6 +1151,57 @@ exit0:
 	return error;
 }
 
+status_t help_command(session_t *session, string_t *args, size_t length)
+{
+	status_t error;
+
+	string_t *final_args;
+	if (length > 1)
+	{
+		final_args = malloc(sizeof *final_args);
+		if (final_args == NULL)
+		{
+			goto exit0;
+		}
+
+		string_initialize(final_args);
+		size_t i;
+		for (i = 0; i < length; i++);
+		{
+			string_concatenate(final_args, args + i);
+			char_vector_push_back(final_args, ' ');
+		}
+		char_vector_pop_back(final_args);
+	}
+	else
+	{
+		final_args = NULL;
+	}
+
+	string_t response;
+	string_initialize(&response);
+	MAKE_COMMAND_FROM_LITERAL(command, "HELP", args);
+	error = send_command_read_response(session, &command, &response);
+	if (error)
+	{
+		goto exit1;
+	}
+
+	if (!matches_code(&response, SYSTEM_STATUS) &&
+		!matches_code(&response, HELP_MESSAGE))
+	{
+		error = NON_FATAL_ERROR;
+		goto exit1;
+	}
+
+exit2:
+	string_uninitialize(&response);
+exit1:
+	free(final_args);
+exit0:
+	return error;
+}
+
 status_t quit_command(session_t *session)
 {
 	status_t error;
@@ -976,20 +1255,35 @@ status_t extended_command(session_t *session)
 {
 	status_t error = SUCCESS;
 
-	printf("Extended mode is now ");
+	char *word;
 	if (session->extended_mode)
 	{
-		printf("off");
+		if (session->ip4 == NULL)
+		{
+			printf("No IPv4 address was found, so extended mode cannot be turned off.\n");
+			error = NON_FATAL_ERROR;
+			goto exit0;
+		}
+
+		word = "off";
 		session->extended_mode = 0;
 	}
 	else
 	{
-		printf("on");
+		if (session->ip4 == NULL)
+		{
+			printf("No IPv4 address was found, so extended mode cannot be turned off.\n");
+			error = NON_FATAL_ERROR;
+			goto exit0;
+		}
+
+		word = "on";
 		session->extended_mode = 1;
 	}
 
-	printf(".\n");
+	printf("Extended mode is now %s.\n", word);
 
+exit0:
 	return error;
 }
 
@@ -1107,8 +1401,14 @@ status_t read_entire_response(session_t *session, string_t *response)
 	char *c_str = string_c_str(response);
 	printf("%s", c_str);
 	
-	//error = write_log(session, c_str, string_length(response));
+	error = write_received_message_to_log(session, response);
+	if (error)
+	{
+		goto exit0;
+	}
 
+	//This error is common across nearly every single command type, so treat it
+	//uniformly here, and treat it like a fatal error
 	if (matches_code(response, SERVICE_NOT_AVAILABLE))
 	{
 		error = SERVICE_AVAILIBILITY_ERROR;
@@ -1210,6 +1510,11 @@ status_t read_single_character(int socket, char *c)
 status_t read_until_eof(int socket, string_t *response)
 {
 	status_t error = SUCCESS;
+
+	//use a bigger buffer rather than reading single character at a time
+	//because:
+	//	A.) Not looking for specific character sequence to end at
+	//	B.) For efficiency's sake - data port might transfer much more data
 	char buff[512];
 	ssize_t bytes_read = read(socket, buff, sizeof buff);
 	while (bytes_read > 0)
@@ -1243,27 +1548,132 @@ uint8_t bool_strcmp(char *s1, char *s2)
 	return strcmp(s1, s2) == 0;
 }
 
-/*
-status_t write_log(session_t *session, char *message, size_t length)
+status_t write_log(session_t *session, string_t *message)
 {
-	status_t error;
-	time_t time = time(NULL);
-	if (time < 0)
+	status_t error = SUCCESS;
+
+	time_t time_val = time(NULL);
+	if (time_val < 0)
 	{
 		error = TIME_GET_ERROR;
 		goto exit0;
 	}
 
-	char *time_string = ctime(&time);
-	if (time_string == NULL)
+	char *time_val_string = ctime(&time_val);
+	if (time_val_string == NULL)
 	{
 		error = TIME_STRING_ERROR;
 		goto exit0;
 	}
+	size_t time_len = strlen(time_val_string);
+	time_val_string[time_len - 1] = ' ';
 
-	if (write(
+	if (write(session->log_file, time_val_string, time_len) < 0)
+	{
+		error = FILE_WRITE_ERROR;
+		goto exit0;
+	}
+
+	if (write(session->log_file, string_c_str(message), string_length(message)) < 0)
+	{
+		error = FILE_WRITE_ERROR;
+		goto exit0;
+	}
+
+	if (write(session->log_file, "\n", 1) < 0)
+	{
+		error = FILE_WRITE_ERROR;
+		goto exit0;
+	}
 
 exit0:
 	return error;
 }
-*/
+
+status_t write_received_message_to_log(session_t *session, string_t *message)
+{
+	status_t error = SUCCESS;
+
+	string_t final_message;
+	string_initialize(&final_message);
+	char received[] = "Received: ";
+	string_assign_from_char_array_with_size(&final_message, received, sizeof
+		received - 1); //-1 for '\0'
+	string_concatenate(&final_message, message);
+
+	error = write_log(session, &final_message);
+	if (error)
+	{
+		goto exit0;
+	}
+
+exit0:
+	string_uninitialize(&final_message);
+	return error;
+}
+
+void print_error_message(status_t error)
+{
+	switch (error)
+	{
+		case SUCCESS:
+			break;
+		case BAD_COMMAND_LINE:
+			//let specific cases handle in main
+			break;
+		case FILE_OPEN_ERROR:
+			//there's only one case of file open error,
+			//and it can be handled locally
+			break;
+		case FILE_WRITE_ERROR:
+			printf("Could not write to log file.\n");
+			break;
+		case SOCKET_OPEN_ERROR:
+			printf("Could not open socket.\n");
+			break;
+		case SOCKET_WRITE_ERROR:
+			printf("Could not write to socket.\n");
+			break;
+		case SOCKET_READ_ERROR:
+			printf("Could not read from socket.\n");
+			break;
+		case BIND_ERROR:
+			printf("Could not bind to socket for data connection.\n");
+			break;
+		case LISTEN_ERROR:
+			printf("Could not listen on socket for data connection.\n");
+			break;
+		case ACCEPT_ERROR:
+			printf("Could not accept connections on the data connection socket.\n");
+		case SOCK_NAME_ERROR:
+			printf("Could not get port number of data connection socket.\n");
+			break;
+		case HOST_ERROR:
+			printf("Could not find the specified host.\n");
+			break;
+		case MEMORY_ERROR:
+			printf("Could not allocate memory.\n");
+			break;
+		case ACCEPTING_ERROR:
+		case LOG_IN_ERROR:
+		case SERVICE_AVAILIBILITY_ERROR:
+			//these three errors come from the server. Outputting the response
+			//itself displays an error
+			break;
+		case GET_NAME_ERROR:
+			//happens only once
+			break;
+		case TIME_GET_ERROR:
+			printf("Could not retreive time for log file.\n");
+			break;
+		case TIME_STRING_ERROR:
+			printf("Could not convert time to string for log fie.\n");
+			break;
+		case NON_FATAL_ERROR:
+			//non fatal error - don't need to let user know
+			break;
+		default:
+			printf("Unknown error: %lu\n", error);
+			break;
+	}
+}
