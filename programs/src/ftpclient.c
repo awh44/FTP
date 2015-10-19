@@ -15,8 +15,6 @@
 
 #define MINIMUM_ARGC 3
 #define DEFAULT_COMMAND_PORT 21
-#define MAX_PORTS UINT16_MAX
-#define PRIVILEGED_PORTS 1024
 #define PORT_DIVISOR 256
 
 #define MAKE_COMMAND_FROM_LITERAL(var, command, str_args)\
@@ -48,6 +46,7 @@ typedef uint64_t status_t;
 #define SOCK_NAME_ERROR 18
 #define ACCEPT_ERROR 19
 #define NON_FATAL_ERROR 20
+#define HOST_ERROR 21
 
 #define RESTART "110"
 #define SERVICE_READY_IN "120"
@@ -107,11 +106,41 @@ typedef struct
 	string_t *args;
 } command_t;
 
+/**
+  * parses the command line, ensuring that it's valid and placing the port
+  * number in port, if available.
+  * @param argc - the argc received by main
+  * @param argv - the argv argument array received by main
+  * @param port - out param; the port number to be used for the FTP connection
+  */
 status_t parse_command_line(int argc, char *argv[], uint16_t *port);
-status_t initialize_session(session_t *session, char *host, uint16_t port);
-status_t make_connection(int *sock, struct hostent *host, uint16_t port);
+
+/**
+  * makes a connection to the given host on the given port, using socket sock
+  * @param sock - out param; the socket over which the connection will be made
+  * @param host - the host name to which to connect
+  * @param port - the port number to which to connect (still in host order)
+  */
+status_t make_connection(int *sock, char *host, uint16_t port);
+
+/**
+  * opens the file to be ussed for logging at file name filename
+  * @param fd       - out param; the file desrcriptor for the log file
+  * @param filename - the file name to use for the log file
+  */
 status_t open_log_file(int *fd, char *filename);
+
+/**
+  * gets the IPv4 and IPv6 IP addresses, if available, by walking the ifaddrs
+  * list and sets them appropriately in session
+  * @param session - session object; ip4 and ip6 pointers will be set upon
+  * success
+  */
 status_t get_ips(session_t *session);
+
+/**
+  * helpter function for get_ips
+  */
 status_t try_set_hostname(struct ifaddrs *ifa, char **hostptr, size_t sockaddr_len,
 	char *localhost);
 status_t do_session(session_t *sesson);
@@ -121,13 +150,15 @@ status_t log_in(session_t *session);
 status_t cwd_command(session_t *session, string_t *args, size_t length);
 status_t cdup_command(session_t *session);
 status_t list_command(session_t *session, string_t *args, size_t length);
+status_t send_list_command(session_t *session, string_t *args);
 status_t pwd_command(session_t *session);
 status_t quit_command(session_t *session);
 status_t port_command(session_t *session, int *listen_socket);
-status_t set_up_listen_socket(session_t *session, int *listen_socket, uint16_t
-	*listen_port, int af, char *address);
+status_t pasv_command(session_t *session, string_t *host, uint16_t *port);
 status_t passive_command(session_t *session);
 status_t extended_command(session_t *session);
+status_t set_up_listen_socket(session_t *session, int *listen_socket, uint16_t
+	*listen_port, int af, char *address);
 
 status_t send_command(session_t *session, command_t *command);
 status_t read_entire_response(session_t *sesson, string_t *response);
@@ -152,13 +183,8 @@ int main(int argc, char *argv[])
 		goto exit0;
 	}
 
-	port = htons(port);
-	struct hostent *host = gethostbyname(argv[1]);
-
-	srand(time(NULL));
-
 	session_t session;
-	error = make_connection(&session.command_socket, host, port);
+	error = make_connection(&session.command_socket, argv[1], port);
 	if (error)
 	{
 		printf("Could not connect to the specified host.\n");
@@ -181,6 +207,7 @@ int main(int argc, char *argv[])
 	//ip address, need to use passive mode
 	if (session.ip4 != NULL && session.ip6 != NULL)
 	{
+		printf("Starting in active mode.\n");
 		session.passive_mode = 0;
 	}
 	else
@@ -235,8 +262,15 @@ status_t parse_command_line(int argc, char *argv[], uint16_t *port)
 	return SUCCESS;
 }
 
-status_t make_connection(int *sock, struct hostent *host, uint16_t port)
+status_t make_connection(int *sock, char *host_str, uint16_t port)
 {
+	port = htons(port);
+	struct hostent *host = gethostbyname(host_str);
+	if (host == NULL)
+	{
+		return HOST_ERROR;
+	}
+
 	if ((*sock = socket(AF_INET, SOCK_STREAM, 0)) < 0)
 	{
 		return SOCKET_OPEN_ERROR;
@@ -283,6 +317,11 @@ status_t get_ips(session_t *session)
 	struct ifaddrs *ifa;
 	for (ifa = ifaddr; ifa != NULL; ifa = ifa->ifa_next)
 	{
+		if (ifa->ifa_addr == NULL)
+		{
+			continue;
+		}
+
 		if (ifa->ifa_addr->sa_family == AF_INET && session->ip4 == NULL)
 		{
 			error = try_set_hostname(ifa, &session->ip4, sizeof(struct sockaddr_in),
@@ -584,45 +623,62 @@ exit0:
 status_t list_command(session_t *session, string_t *args, size_t length)
 {
 	status_t error;
+
+	string_t *final_args = length > 1 ? args + 1 : NULL;
 	
-	int listen_socket;
-	error = port_command(session, &listen_socket);
-	if (error)
+	int data_socket; 
+	if (!session->passive_mode)
 	{
-		goto exit0;
+		int listen_socket;
+		error = port_command(session, &listen_socket);
+		if (error)
+		{
+			goto exit0;
+		}
+
+		error = send_list_command(session, final_args);
+		if (error)
+		{
+			close(listen_socket);
+			goto exit0;
+		}
+
+		struct sockaddr_in6 cad;
+		socklen_t cadlen = sizeof cad;
+		data_socket = accept(listen_socket, (struct sockaddr *) &cad, &cadlen);
+		if (data_socket < 0)
+		{
+			close(listen_socket);
+			error = ACCEPT_ERROR;
+			goto exit1;
+		}
 	}
-	
-	string_t response;
-	string_initialize(&response);
-
-	MAKE_COMMAND_FROM_LITERAL(command, "LIST", length > 1 ? args + 1 : NULL);
-
-	error = send_command_read_response(session, &command, &response);
-	if (error)
+	else
 	{
-		goto exit1;
-	}
+		string_t host;
+		string_initialize(&host);
+		uint16_t port;
 
-	if (matches_code(&response, NOT_LOGGED_IN))
-	{
-		error = LOG_IN_ERROR;
-		goto exit1;
-	}
+		error = pasv_command(session, &host, &port);
+		if (error)
+		{
+			string_uninitialize(&host);
+			goto exit0;
+		}
 
-	if (!matches_code(&response, TRANSFER_STARTING) &&
-		!matches_code(&response, FILE_STATUS_OKAY))
-	{
-		error = NON_FATAL_ERROR;
-		goto exit1;
-	}
+		error = make_connection(&data_socket, string_c_str(&host), port);
+		if (error)
+		{
+			string_uninitialize(&host);
+			goto exit1;
+		}
 
-	struct sockaddr_in cad;
-	socklen_t cadlen = sizeof cad;
-	int data_socket = accept(listen_socket, (struct sockaddr *) &cad, &cadlen);
-	if (data_socket < 0)
-	{
-		error = ACCEPT_ERROR;
-		goto exit1;
+		string_uninitialize(&host);
+		error = send_list_command(session, final_args);
+		if (error)
+		{
+			goto exit1;
+		}
 	}
 
 	string_t data;
@@ -634,27 +690,61 @@ status_t list_command(session_t *session, string_t *args, size_t length)
 	}
 	printf("%s", string_c_str(&data));
 	
-	char_vector_clear(&response);
+	string_t response;
+	string_initialize(&response);
 	error = read_entire_response(session, &response);
 	if (error)
 	{
-		goto exit2;
+		goto exit3;
 	}
 
 	if (!matches_code(&response, CONNECTION_OPEN_NO_TRANSFER) &&
 		!matches_code(&response, CLOSING_DATA_CONNECTION))
 	{
 		error = NON_FATAL_ERROR;
-		goto exit2;
+		goto exit3;
 	}
 
+exit3:
+	string_uninitialize(&response);
 exit2:
-	close(data_socket);
 	string_uninitialize(&data);
 exit1:
-	string_uninitialize(&response);
-	close(listen_socket);
+	close(data_socket);
 exit0:
+	return error;
+}
+
+status_t send_list_command(session_t *session, string_t *args)
+{
+	status_t error;
+
+	string_t response;
+	string_initialize(&response);
+
+	MAKE_COMMAND_FROM_LITERAL(command, "LIST", args);
+
+	error = send_command_read_response(session, &command, &response);
+	if (error)
+	{
+		goto exit0;
+	}
+
+	if (matches_code(&response, NOT_LOGGED_IN))
+	{
+		error = LOG_IN_ERROR;
+		goto exit0;
+	}
+
+	if (!matches_code(&response, TRANSFER_STARTING) &&
+		!matches_code(&response, FILE_STATUS_OKAY))
+	{
+		error = NON_FATAL_ERROR;
+		goto exit0;
+	}
+
+exit0:
+	string_uninitialize(&response);
 	return error;
 }
 
@@ -777,6 +867,132 @@ exit0:
 	return error;
 }
 
+status_t pasv_command(session_t *session, string_t *host, uint16_t *port)
+{
+	status_t error;
+	MAKE_COMMAND_FROM_LITERAL(command, "PASV", NULL);
+
+	string_t response;
+	string_initialize(&response);
+
+	error = send_command_read_response(session, &command, &response);
+	if (error)
+	{
+		goto exit0;
+	}
+
+	if (matches_code(&response, NOT_LOGGED_IN))
+	{
+		error = LOG_IN_ERROR;
+		goto exit0;
+	}
+
+	if (!matches_code(&response, ENTERING_PASSIVE_MODE))
+	{
+		error = NON_FATAL_ERROR;
+		goto exit0;
+	}
+
+	size_t len;
+	string_t *split = string_split(&response, ',', &len);
+	while (char_vector_get(split + 0, 0) != '(' && char_vector_get(split + 0, 0) != '=')
+	{
+		char_vector_remove(split + 0, 0);
+	}
+	char_vector_remove(split + 0, 0);
+
+	size_t i;
+	for (i = 0; i < 4; i++)
+	{
+		string_concatenate(host, split + i);
+		string_concatenate_char_array(host, ".");
+		string_uninitialize(split + i);
+	}
+	char_vector_pop_back(host);
+
+	//The ')' is safe becase atoi stops at the first non-numeric character
+	*port = PORT_DIVISOR * atoi(string_c_str(split + len - 2)) +
+		atoi(string_c_str(split + len - 1));
+	
+	string_uninitialize(split + len - 2);
+	string_uninitialize(split + len - 1);
+	free(split);
+
+exit0:
+	string_uninitialize(&response);
+	return error;
+}
+
+status_t quit_command(session_t *session)
+{
+	status_t error;
+
+	string_t response;
+	string_initialize(&response);
+
+	MAKE_COMMAND_FROM_LITERAL(command, "QUIT", NULL);
+
+	error = send_command_read_response(session, &command, &response);
+	if (error)
+	{
+		goto exit0;
+	}
+
+exit0:
+	string_uninitialize(&response);
+	return error;
+}
+
+status_t passive_command(session_t *session)
+{
+	status_t error = SUCCESS;
+
+	char *word;
+	if (session->passive_mode)
+	{
+		if (session->ip4 == NULL && session->ip6 == NULL)
+		{
+			printf("No local IP addreses were found, so passive mode cannot be turned off.");
+			error = NON_FATAL_ERROR;
+			goto exit0;
+		}
+
+		word = "off";
+		session->passive_mode = 0;
+	}
+	else
+	{
+		word = "on";
+		session->passive_mode = 1;
+	}
+
+	printf("Passive mode is now %s.\n", word);
+
+exit0:
+	return error;
+}
+
+status_t extended_command(session_t *session)
+{
+	status_t error = SUCCESS;
+
+	printf("Extended mode is now ");
+	if (session->extended_mode)
+	{
+		printf("off");
+		session->extended_mode = 0;
+	}
+	else
+	{
+		printf("on");
+		session->extended_mode = 1;
+	}
+
+	printf(".\n");
+
+	return error;
+}
+
 status_t set_up_listen_socket(session_t *session, int *listen_socket, uint16_t
 	*listen_port, int af, char *address)
 {
@@ -834,68 +1050,6 @@ exit_error1:
 	close(*listen_socket);
 exit_error0:
 exit_success:
-	return error;
-}
-
-status_t quit_command(session_t *session)
-{
-	status_t error;
-
-	string_t response;
-	string_initialize(&response);
-
-	MAKE_COMMAND_FROM_LITERAL(command, "QUIT", NULL);
-
-	error = send_command_read_response(session, &command, &response);
-	if (error)
-	{
-		goto exit0;
-	}
-
-exit0:
-	string_uninitialize(&response);
-	return error;
-}
-
-status_t passive_command(session_t *session)
-{
-	status_t error = SUCCESS;
-
-	printf("Passive mode is now ");
-	if (session->passive_mode)
-	{
-		printf("off");
-		session->passive_mode = 0;
-	}
-	else
-	{
-		printf("on");
-		session->passive_mode = 1;
-	}
-	
-	printf(".\n");
-
-	return error;
-}
-
-status_t extended_command(session_t *session)
-{
-	status_t error = SUCCESS;
-
-	printf("Extended mode is now ");
-	if (session->extended_mode)
-	{
-		printf("off");
-		session->extended_mode = 0;
-	}
-	else
-	{
-		printf("on");
-		session->extended_mode = 1;
-	}
-
-	printf(".\n");
-
 	return error;
 }
 
