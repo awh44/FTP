@@ -1379,7 +1379,7 @@ status_t help_command(session_t *session, string_t *args, size_t length)
 
 		string_initialize(final_args);
 		size_t i;
-		for (i = 0; i < length; i++);
+		for (i = 1; i < length; i++)
 		{
 			string_concatenate(final_args, args + i);
 			char_vector_push_back(final_args, ' ');
@@ -1411,7 +1411,11 @@ status_t help_command(session_t *session, string_t *args, size_t length)
 exit2:
 	string_uninitialize(&response);
 exit1:
-	free(final_args);
+	if (final_args != NULL)
+	{
+		string_uninitialize(final_args);
+		free(final_args);
+	}
 exit0:
 	return error;
 }

@@ -1,0 +1,195 @@
+Mon Oct 19 15:27:17 2015 Received: 220 This is ftp0.nyi.freebsd.org - hosted at NYI.net.
+
+Mon Oct 19 15:27:20 2015 Sent: USER anonymous
+
+Mon Oct 19 15:27:20 2015 Received: 331 Please specify the password.
+
+Mon Oct 19 15:27:22 2015 Sent: PASS password
+
+Mon Oct 19 15:27:22 2015 Received: 230-
+230-This is ftp0.nyi.FreeBSD.org, graciously hosted by
+230-New York Internet - NYI.net
+230-
+230-FreeBSD files can be found in the /pub/FreeBSD directory.
+230-
+230 Login successful.
+
+Mon Oct 19 15:27:26 2015 Sent: PORT 10,0,0,213,159,55
+
+Mon Oct 19 15:27:26 2015 Received: 200 PORT command successful. Consider using PASV.
+
+Mon Oct 19 15:27:26 2015 Sent: LIST
+
+Mon Oct 19 15:27:27 2015 Received: 150 Here comes the directory listing.
+
+Mon Oct 19 15:27:27 2015 Accepted connection on data socket.
+
+Mon Oct 19 15:27:27 2015 Received: 226 Directory send OK.
+
+Mon Oct 19 15:27:27 2015 Closing data socket.
+
+Mon Oct 19 15:27:29 2015 Sent: PASV
+
+Mon Oct 19 15:27:29 2015 Received: 227 Entering Passive Mode (96,47,72,72,247,107).
+
+Mon Oct 19 15:27:29 2015 Made connection to server for data socket.
+
+Mon Oct 19 15:27:29 2015 Sent: LIST
+
+Mon Oct 19 15:27:29 2015 Received: 150 Here comes the directory listing.
+
+Mon Oct 19 15:27:29 2015 Received: 226 Directory send OK.
+
+Mon Oct 19 15:27:29 2015 Closing data socket.
+
+Mon Oct 19 15:27:37 2015 Sent: CWD pub
+
+Mon Oct 19 15:27:37 2015 Received: 250 Directory successfully changed.
+
+Mon Oct 19 15:27:41 2015 Sent: PORT 10,0,0,213,137,166
+
+Mon Oct 19 15:27:41 2015 Received: 200 PORT command successful. Consider using PASV.
+
+Mon Oct 19 15:27:41 2015 Sent: LIST
+
+Mon Oct 19 15:27:41 2015 Received: 150 Here comes the directory listing.
+
+Mon Oct 19 15:27:41 2015 Accepted connection on data socket.
+
+Mon Oct 19 15:27:41 2015 Received: 226 Directory send OK.
+
+Mon Oct 19 15:27:41 2015 Closing data socket.
+
+Mon Oct 19 15:27:42 2015 Sent: CDUP
+
+Mon Oct 19 15:27:42 2015 Received: 250 Directory successfully changed.
+
+Mon Oct 19 15:27:43 2015 Sent: PORT 10,0,0,213,222,195
+
+Mon Oct 19 15:27:43 2015 Received: 200 PORT command successful. Consider using PASV.
+
+Mon Oct 19 15:27:43 2015 Sent: LIST
+
+Mon Oct 19 15:27:43 2015 Received: 150 Here comes the directory listing.
+
+Mon Oct 19 15:27:43 2015 Accepted connection on data socket.
+
+Mon Oct 19 15:27:43 2015 Received: 226 Directory send OK.
+
+Mon Oct 19 15:27:43 2015 Closing data socket.
+
+Mon Oct 19 15:27:45 2015 Sent: CWD sdfsdfsdfsdf
+
+Mon Oct 19 15:27:45 2015 Received: 550 Failed to change directory.
+
+Mon Oct 19 15:27:49 2015 Sent: PWD
+
+Mon Oct 19 15:27:49 2015 Received: 257 "/"
+
+Mon Oct 19 15:27:59 2015 Sent: PORT 10,0,0,213,135,63
+
+Mon Oct 19 15:27:59 2015 Received: 200 PORT command successful. Consider using PASV.
+
+Mon Oct 19 15:27:59 2015 Sent: LIST pub
+
+Mon Oct 19 15:27:59 2015 Received: 150 Here comes the directory listing.
+
+Mon Oct 19 15:27:59 2015 Accepted connection on data socket.
+
+Mon Oct 19 15:27:59 2015 Received: 226 Directory send OK.
+
+Mon Oct 19 15:27:59 2015 Closing data socket.
+
+Mon Oct 19 15:28:09 2015 Sent: PORT 10,0,0,213,159,105
+
+Mon Oct 19 15:28:09 2015 Received: 200 PORT command successful. Consider using PASV.
+
+Mon Oct 19 15:28:09 2015 Sent: RETR index.html
+
+Mon Oct 19 15:28:09 2015 Received: 150 Opening BINARY mode data connection for index.html (681 bytes).
+
+Mon Oct 19 15:28:09 2015 Accepted connection on data socket.
+
+Mon Oct 19 15:28:09 2015 Received: 226 Transfer complete.
+
+Mon Oct 19 15:28:09 2015 Closing data socket.
+
+Mon Oct 19 15:28:23 2015 Sent: PASV
+
+Mon Oct 19 15:28:23 2015 Received: 227 Entering Passive Mode (96,47,72,72,223,221).
+
+Mon Oct 19 15:28:23 2015 Made connection to server for data socket.
+
+Mon Oct 19 15:28:23 2015 Sent: RETR favicon.ico
+
+Mon Oct 19 15:28:23 2015 Received: 150 Opening BINARY mode data connection for favicon.ico (5430 bytes).
+
+Mon Oct 19 15:28:24 2015 Received: 226 Transfer complete.
+
+Mon Oct 19 15:28:24 2015 Closing data socket.
+
+Mon Oct 19 15:28:27 2015 Sent: HELP help
+
+Mon Oct 19 15:28:27 2015 Received: 214-The following commands are recognized.
+ ABOR ACCT ALLO APPE CDUP CWD  DELE EPRT EPSV FEAT HELP LIST MDTM MKD
+ MODE NLST NOOP OPTS PASS PASV PORT PWD  QUIT REIN REST RETR RMD  RNFR
+ RNTO SITE SIZE SMNT STAT STOR STOU STRU SYST TYPE USER XCUP XCWD XMKD
+ XPWD XRMD
+214 Help OK.
+
+Mon Oct 19 15:28:42 2015 Sent: QUIT
+
+Mon Oct 19 15:28:42 2015 Received: 221 Goodbye.
+
+Mon Oct 19 15:28:48 2015 Received: 220 This is ftp0.nyi.freebsd.org - hosted at NYI.net.
+
+Mon Oct 19 15:28:50 2015 Sent: USER anonymous
+
+Mon Oct 19 15:28:50 2015 Received: 331 Please specify the password.
+
+Mon Oct 19 15:28:52 2015 Sent: PASS password
+
+Mon Oct 19 15:28:52 2015 Received: 230-
+230-This is ftp0.nyi.FreeBSD.org, graciously hosted by
+230-New York Internet - NYI.net
+230-
+230-FreeBSD files can be found in the /pub/FreeBSD directory.
+230-
+230 Login successful.
+
+Mon Oct 19 15:28:54 2015 Sent: PORT 10,0,0,213,168,127
+
+Mon Oct 19 15:28:54 2015 Received: 200 PORT command successful. Consider using PASV.
+
+Mon Oct 19 15:28:54 2015 Sent: LIST sdfsdfsdf
+
+Mon Oct 19 15:28:55 2015 Received: 150 Here comes the directory listing.
+
+Mon Oct 19 15:28:55 2015 Accepted connection on data socket.
+
+Mon Oct 19 15:28:55 2015 Received: 226 Directory send OK.
+
+Mon Oct 19 15:28:55 2015 Closing data socket.
+
+Mon Oct 19 15:29:03 2015 Sent: QUIT
+
+Mon Oct 19 15:29:03 2015 Received: 221 Goodbye.
+
+Mon Oct 19 15:29:59 2015 Received: 220 This is ftp0.nyi.freebsd.org - hosted at NYI.net.
+
+Mon Oct 19 15:30:01 2015 Sent: USER anonymous
+
+Mon Oct 19 15:30:01 2015 Received: 331 Please specify the password.
+
+Mon Oct 19 15:30:03 2015 Sent: PASS password
+
+Mon Oct 19 15:30:03 2015 Received: 230-
+230-This is ftp0.nyi.FreeBSD.org, graciously hosted by
+230-New York Internet - NYI.net
+230-
+230-FreeBSD files can be found in the /pub/FreeBSD directory.
+230-
+230 Login successful.
+
+Mon Oct 19 15:30:12 2015 Sent: EPRT |2|2601:47:4201:94c5::7812|45971|
+

@@ -4,8 +4,8 @@ where the ftpclient is not neccessary. Alternatively, compile the
 src/ftpclient.c and src/string_t.c source files with gcc with your custom flags.
 To run the program, use ./ftpclient server logfile [port], where server is the
 server to which to connect, the log file is the file in which log reports will
-be written, and port is optional and tells the client which port to try to use
-to connect.
+be written, and port is optional and tells the client to which port to try to
+connect.
 
 Here is a list of the available commands and their formats, where [] parts are
 optional and all else is required.
@@ -23,10 +23,16 @@ optional and all else is required.
 		on whether the client program could find any IPv4 or IPv6 addresses
 
 Note that the "extended" mode does not exactly work, however. When in active
-mode, the client will make an "EPRT" request to the server, but it will never
-get a response. For the time being, additionally, extended mode has not been
-implemented in passive mode. The client will use "PASV" no matter the value of
-the "extended" value
+mode, the client will make an "EPRT" request to the server, which occasionally
+gets a positive response, but the server will never connect to the client. For
+the time being, additionally, extended mode has not been implemented in passive
+mode. The client will use "PASV" no matter the value of the "extended" flag.
+
+A sample run can be found in the samples/sample_log, for all commands, with
+variations on all of them, including failures and successes. Also, at the
+bottom, an example of an EPRT command can be found. On occasion, this command
+would get a "successful" response, but then a connection would never be made,
+but on this occassion, a response was never received.
 
 Also, I know gotos have a bad reputation, but I wanted to experiment with a new,
 common-in-C error-handling paradigm for this assignment, and they seem to have
