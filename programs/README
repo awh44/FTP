@@ -1,0 +1,33 @@
+To compile the program, use:
+	make [ftpclient]
+where the ftpclient is not neccessary. Alternatively, compile the
+src/ftpclient.c and src/string_t.c source files with gcc with your custom flags.
+To run the program, use ./ftpclient server logfile [port], where server is the
+server to which to connect, the log file is the file in which log reports will
+be written, and port is optional and tells the client which port to try to use
+to connect.
+
+Here is a list of the available commands and their formats, where [] parts are
+optional and all else is required.
+	cd directory - sends CWD directory to server
+	cdup - sends CDUP to server
+	ls [file or directory name] - sends LIST or LIST of file/dir name
+	get server_file [local file]
+	pwd - sends PWD to server
+	help [help list] - sends HELP to the server
+	quit - sends QUIT to the server and shuts the program down
+	passive - toggles the "passive" flag, i.e., whether to use PASV (in passive
+		mode) or PORT (in non-passive/active mode) Upon logging in, defaults to PORT first
+	extended - "extended" flag; if true, forces the use of IPv6 for EPSV and
+		EPRT. Defaults first to false and then to either true or false depending
+		on whether the client program could find any IPv4 or IPv6 addresses
+
+Note that the "extended" mode does not exactly work, however. When in active
+mode, the client will make an "EPRT" request to the server, but it will never
+get a response. For the time being, additionally, extended mode has not been
+implemented in passive mode. The client will use "PASV" no matter the value of
+the "extended" value
+
+Also, I know gotos have a bad reputation, but I wanted to experiment with a new,
+common-in-C error-handling paradigm for this assignment, and they seem to have
+worked fairly well.

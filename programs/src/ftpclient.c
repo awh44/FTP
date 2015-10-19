@@ -106,7 +106,7 @@ typedef struct
 
 //------------------------------SETUP FUNCTIONS--------------------------------
 /**
-  * parses the command line, ensuring that it's valid and placing the port
+  * parses the command line, ensuring that it's valid and places the port
   * number in port, if available.
   * @param argc - the argc received by main
   * @param argv - the argv argument array received by main
@@ -186,23 +186,50 @@ status_t cwd_command(session_t *session, string_t *args, size_t length);
 status_t cdup_command(session_t *session);
 
 /**
-  * sends a LIST command, including setup with PORT/PASV commands and
+* sends a LIST command, including setup with PORT/PASV commands, and
+* recognizes any errors that occur. Uses the command socket in session and
+* the command line args array of length length
+* @param session - the current session's object
+* @param args    - the arguments the user passed on the command line
+* @param length  - the length of the args array
+*/
+status_t list_command(session_t *session, string_t *args, size_t length);
+
+/**
+  * actually sends the LIST command itself within the current session, using the
+  * arguments args
+  * @param session - the current session to use
+  * @param args    - the args to be passed to the server with the LIST command
+  */
+status_t send_list_command(session_t *session, string_t *args);
+
+/**
+  * sends a RETR command, including setup with PORT/PASV commands, and
   * recognizes any errors that occur. Uses the command socket in session and
   * the command line args array of length length
   * @param session - the current session's object
   * @param args    - the arguments the user passed on the command line
   * @param length  - the length of the args array
-
   */
-status_t list_command(session_t *session, string_t *args, size_t length);
+status_t retr_command(session_t *session, string_t *args, size_t length);
 
 /**
-  * actually sends the LIST command itself within the current session, using the
-  * arguemtns args
+  * actually sends the RETR command itself within the current session, using the
+  * arguments args
   * @param session - the current session to use
   * @param args    - the args to be passed to the server with the LIST command
   */
-status_t send_list_command(session_t *session, string_t *args);
+status_t send_retr_command(session_t *session, string_t *args);
+
+/**
+  * given the command line arguments args, with length length, writes the data
+  * in data to either the file name provided in args (args[2]) or the file name retrieved
+  * from the server, held in args (args[1])
+  * @param args   - the args parsed from the command line
+  * @param length - the length of the args array
+  * @param data   - the data to write to the file
+  */
+status_t retr_write_file(string_t *args, size_t length, string_t *data);
 
 /**
   * sends a PWD command to the server in the current session
@@ -264,6 +291,15 @@ status_t extended_command(session_t *session);
   */
 status_t set_up_listen_socket(session_t *session, int *listen_socket, uint16_t
 	*listen_port, int af, char *address);
+
+/**
+  *
+  */
+status_t get_data_socket_active(session_t *session, int *data_socket,
+	status_t (send_the_command)(session_t *, string_t *), string_t *args);
+
+status_t get_data_socket_passive(session_t *session, int *data_socket, status_t
+		(send_the_command)(session_t *, string_t *), string_t *args);
 //---------------------------END COMMAND FUNCTIONS-----------------------------
 
 //-----------------------------SOCKET FUNCTIONS--------------------------------
@@ -358,10 +394,36 @@ uint8_t bool_strcmp(char *s1, char *s2);
   * @param message - the messsage to write to the log
   * @param length  - the length of the message
   */
-status_t write_log(session_t *session, string_t *message);
+status_t write_log(session_t *session, char *message, size_t length);
 
+/**
+  * write a "received" message to the log, with the received data
+  * @param session - current session
+  * @param message - the message received/to be written
+  */
 status_t write_received_message_to_log(session_t *session, string_t *message);
 
+/**
+  * write a "sent" message to the log, with the send data
+  * @param session - current session
+  * @param message - the message sent/to be written
+  */
+status_t write_sent_message_to_log(session_t *session, string_t *message);
+
+/**
+  * write a message to the log, prepended by "prepend" of length size
+  * @param session - current session
+  * @param message - the message to be written
+  * @param prepend - some data to prepend to the message
+  * @param size    - the length of prepend
+  */
+status_t prepend_and_write_to_log(session_t *session, string_t *message, char
+	*prepend, size_t size);
+
+/**
+  * given an error code, prints a generic, stock error message for that type
+  * @param error the error flag
+  */
 void print_error_message(status_t error);
 //----------------------------END HELPER FUNCTIONS------------------------------
 
@@ -453,6 +515,7 @@ status_t parse_command_line(int argc, char *argv[], uint16_t *port)
 
 	if (argc > MINIMUM_ARGC)
 	{
+		//use a temporary integer because port is unsigned
 		int tmp = atoi(argv[3]);
 		if (tmp < 0)
 		{
@@ -472,6 +535,7 @@ status_t parse_command_line(int argc, char *argv[], uint16_t *port)
 
 status_t make_connection(int *sock, char *host_str, uint16_t port)
 {
+	//Convert the port to network (i.e., big endian) byte order
 	port = htons(port);
 	struct hostent *host = gethostbyname(host_str);
 	if (host == NULL)
@@ -479,17 +543,18 @@ status_t make_connection(int *sock, char *host_str, uint16_t port)
 		return HOST_ERROR;
 	}
 
+	//Create an IPv4 TCP socket
 	if ((*sock = socket(AF_INET, SOCK_STREAM, 0)) < 0)
 	{
 		return SOCKET_OPEN_ERROR;
 	}
 
+	//Create the connection
 	struct sockaddr_in sad;
 	memset(&sad, 0, sizeof(sad));
 	sad.sin_family = AF_INET;
 	sad.sin_port = port;
 	memcpy(&sad.sin_addr, host->h_addr, host->h_length);
-
 	if (connect(*sock, (struct sockaddr *) &sad, sizeof(sad)) < 0)
 	{
 		close(*sock);
@@ -501,6 +566,8 @@ status_t make_connection(int *sock, char *host_str, uint16_t port)
 
 status_t open_log_file(int *fd, char *filename)
 {
+	//Create the file if it doesn't exist, and always append new logs to the end
+	//of the file
 	if ((*fd = open(filename, O_WRONLY | O_CREAT | O_APPEND, 0600)) < 0)
 	{
 		printf("Could not open log file.\n");
@@ -584,6 +651,7 @@ status_t try_set_hostname(struct ifaddrs *ifa, char **hostptr, size_t sockaddr_l
 		goto exit0;
 	}
 
+	//Ignore localhosts
 	if (strcmp(host, localhost) != 0)
 	{
 		*hostptr = malloc(NI_MAXHOST);
@@ -643,6 +711,10 @@ status_t do_session(session_t *session)
 		else if (bool_strcmp(c_str, "ls"))
 		{
 			error = list_command(session, args, array_length);
+		}
+		else if (bool_strcmp(c_str, "get"))
+		{
+			error = retr_command(session, args, array_length);
 		}
 		else if (bool_strcmp(c_str, "pwd"))
 		{
@@ -748,6 +820,8 @@ status_t log_in(session_t *session)
 		goto exit0;
 	}
 
+	//If the response informs us that a password is required, then retrieve that
+	//from the user and send it
 	if (matches_code(&response, NEED_PASSWORD))
 	{
 		printf("Password: ");
@@ -760,12 +834,15 @@ status_t log_in(session_t *session)
 			goto exit0;
 		}
 		
+		//If a password isn't needed, then continue on
 		if (matches_code(&response, NOT_IMPLEMENTED_SUPERFLUOUS))
 		{
 			goto exit0;
 		}
 	}
 
+	//If after submitting the password we're still not logged in, return an
+	//error.
 	if (!matches_code(&response, USER_LOGGED_IN))
 	{
 		error = LOG_IN_ERROR;
@@ -798,12 +875,16 @@ status_t cwd_command(session_t *session, string_t *args, size_t array_length)
 		goto exit1;
 	}
 
+	//If the user is no longer logged in, return an error to the caller
 	if (matches_code(&response, NOT_LOGGED_IN))
 	{
 		error = LOG_IN_ERROR;
 		goto exit1;
 	}
 
+	//If the action was not successful, return an error to the caller, to let
+	//them the call was not successful, but make it non-fatal, because execution
+	//can continue
 	if (!matches_code(&response, FILE_ACTION_COMPLETED))
 	{
 		error = NON_FATAL_ERROR;
@@ -831,12 +912,16 @@ status_t cdup_command(session_t *session)
 		goto exit0;
 	}
 
+	//If the user is no longer logged in, return an error to the caller
 	if (matches_code(&response, NOT_LOGGED_IN))
 	{
 		error = LOG_IN_ERROR;
 		goto exit0;
 	}
 
+	//If the action was not successful, return an error to the caller, to let
+	//them the call was not successful, but make it non-fatal, because execution
+	//can continue
 	if (!matches_code(&response, COMMAND_OKAY))
 	{
 		error = NON_FATAL_ERROR;
@@ -851,93 +936,64 @@ exit0:
 status_t list_command(session_t *session, string_t *args, size_t length)
 {
 	status_t error;
-
+	char closing_message[] = "Closing data socket.\n";
 	string_t *final_args = length > 1 ? args + 1 : NULL;
 	
+	//Depending whether the user is in passive or active mode, set up the data
+	//socket for reading the LIST data, including sending the initial LIST
+	//command and reading the response
 	int data_socket; 
 	if (!session->passive_mode)
 	{
-		int listen_socket;
-		error = port_command(session, &listen_socket);
-		if (error)
-		{
-			goto exit0;
-		}
-
-		error = send_list_command(session, final_args);
-		if (error)
-		{
-			close(listen_socket);
-			goto exit0;
-		}
-
-		struct sockaddr_in6 cad;
-		socklen_t cadlen = sizeof cad;
-		data_socket = accept(listen_socket, (struct sockaddr *) &cad, &cadlen);
-		if (data_socket < 0)
-		{
-			close(listen_socket);
-			error = ACCEPT_ERROR;
-			goto exit1;
-		}
+		error = get_data_socket_active(session, &data_socket,
+			send_list_command, final_args);
 	}
 	else
 	{
-		string_t host;
-		string_initialize(&host);
-		uint16_t port;
-
-		error = pasv_command(session, &host, &port);
-		if (error)
-		{
-			string_uninitialize(&host);
-			goto exit0;
-		}
-
-		error = make_connection(&data_socket, string_c_str(&host), port);
-		if (error)
-		{
-			string_uninitialize(&host);
-			goto exit1;
-		}
-
-		string_uninitialize(&host);
-		error = send_list_command(session, final_args);
-		if (error)
-		{
-			goto exit1;
-		}
+		error = get_data_socket_passive(session, &data_socket,
+			send_list_command, final_args);
 	}
 
+	if (error)
+	{
+		goto exit0;
+	}
+
+	//read the data itself
 	string_t data;
 	string_initialize(&data);
 	error = read_until_eof(data_socket, &data);
 	if (error)
 	{
-		goto exit2;
+		goto exit1;
 	}
+	//and print it
 	printf("%s", string_c_str(&data));
-	
+
+	//read the second response from the server
 	string_t response;
 	string_initialize(&response);
 	error = read_entire_response(session, &response);
 	if (error)
 	{
-		goto exit3;
+		goto exit2;
 	}
 
+	//If the action was not successful, return an error to the caller, to let
+	//them the call was not successful, but make it non-fatal, because execution
+	//can continue
 	if (!matches_code(&response, CONNECTION_OPEN_NO_TRANSFER) &&
 		!matches_code(&response, CLOSING_DATA_CONNECTION))
 	{
 		error = NON_FATAL_ERROR;
-		goto exit3;
+		goto exit2;
 	}
 
-exit3:
-	string_uninitialize(&response);
 exit2:
-	string_uninitialize(&data);
+	string_uninitialize(&response);
 exit1:
+	string_uninitialize(&data);
+	write_log(session, closing_message , sizeof closing_message - 1);
 	close(data_socket);
 exit0:
 	return error;
@@ -958,12 +1014,16 @@ status_t send_list_command(session_t *session, string_t *args)
 		goto exit0;
 	}
 
+	//If not logged in, return an error to the caller to let them know.
 	if (matches_code(&response, NOT_LOGGED_IN))
 	{
 		error = LOG_IN_ERROR;
 		goto exit0;
 	}
 
+	//Otherwise, while not matching either of these means the command failed,
+	//the error is non-fatal (i.e., the program can keep executing), so indicate
+	//that
 	if (!matches_code(&response, TRANSFER_STARTING) &&
 		!matches_code(&response, FILE_STATUS_OKAY))
 	{
@@ -973,6 +1033,152 @@ status_t send_list_command(session_t *session, string_t *args)
 
 exit0:
 	string_uninitialize(&response);
+	return error;
+}
+
+status_t retr_command(session_t *session, string_t *args, size_t length)
+{
+	char closing_message[] = "Closing data socket.\n";
+	status_t error = SUCCESS;
+
+	if (length <= 1)
+	{
+		printf("Please supply a file to get.\n");
+		error = NON_FATAL_ERROR;
+		goto exit0;
+	}
+
+	int data_socket; 
+	if (!session->passive_mode)
+	{
+		error = get_data_socket_active(session, &data_socket, send_retr_command,
+				args + 1);
+	}
+	else
+	{
+		error = get_data_socket_passive(session, &data_socket,
+			send_retr_command, args + 1);
+	}
+
+	if (error)
+	{
+		goto exit0;
+	}
+
+	string_t data;
+	string_initialize(&data);
+	error = read_until_eof(data_socket, &data);
+	if (error)
+	{
+		goto exit1;
+	}
+
+	string_t response;
+	string_initialize(&response);
+	error = read_entire_response(session, &response);
+	if (error)
+	{
+		goto exit2;
+	}
+
+	if (!matches_code(&response, CONNECTION_OPEN_NO_TRANSFER) &&
+		!matches_code(&response, CLOSING_DATA_CONNECTION))
+	{
+		error = NON_FATAL_ERROR;
+		goto exit2;
+	}
+
+	error = retr_write_file(args, length, &data);
+	if (error)
+	{
+		goto exit2;
+	}
+
+exit2:
+	string_uninitialize(&response);
+exit1:
+	string_uninitialize(&data);
+	error = write_log(session, closing_message , sizeof closing_message - 1);
+	close(data_socket);
+exit0:
+	return error;
+}
+
+status_t send_retr_command(session_t *session, string_t *args)
+{
+	status_t error;
+	string_t response;
+	string_initialize(&response);
+
+	MAKE_COMMAND_FROM_LITERAL(command, "RETR", args);
+
+	error = send_command_read_response(session, &command, &response);
+	if (error)
+	{
+		goto exit1;
+	}
+
+	if (matches_code(&response, NOT_LOGGED_IN))
+	{
+		error = LOG_IN_ERROR;
+		goto exit1;
+	}
+
+	if (!matches_code(&response, TRANSFER_STARTING) &&
+		!matches_code(&response, FILE_STATUS_OKAY))
+	{
+		error = NON_FATAL_ERROR;
+		goto exit1;
+	}
+
+exit1:
+	string_uninitialize(&response);
+exit0:
+	return error;
+
+}
+
+status_t retr_write_file(string_t *args, size_t length, string_t *data)
+{
+	status_t error = SUCCESS;
+
+	char *new_name;
+	if (length > 2)
+	{
+		//if the user supplied a third argument, make that the name of the
+		//output file
+		new_name = string_c_str(args + 2);
+	}
+	else
+	{
+		//otherwise, default to the name of the server file
+		new_name = string_c_str(args + 1);
+	}
+
+	int new_fd = open(new_name, O_CREAT | O_WRONLY, 0600);
+	if (new_fd < 0)
+	{
+		error = FILE_OPEN_ERROR;
+		goto exit0;
+	}
+
+	char *c_str = string_c_str(data);
+	size_t data_size = string_length(data);
+	size_t total_written = 0;
+	while (total_written < data_size)
+	{
+		ssize_t written = write(new_fd, c_str + total_written, data_size - total_written);
+		if (written < 0)
+		{
+			error = FILE_WRITE_ERROR;
+			goto exit1;
+		}
+
+		total_written += data_size;
+	}
+exit1:
+	close(new_fd);
+exit0:
 	return error;
 }
 
@@ -1122,13 +1328,18 @@ status_t pasv_command(session_t *session, string_t *host, uint16_t *port)
 	}
 
 	size_t len;
+	//Split the response on the commas
 	string_t *split = string_split(&response, ',', &len);
+	//Then walk the first string until a '(' or a '=' is hit (which is returned
+	//by the server is not defined in the protocol and is therefore
+	//implementation dependent)
 	while (char_vector_get(split + 0, 0) != '(' && char_vector_get(split + 0, 0) != '=')
 	{
 		char_vector_remove(split + 0, 0);
 	}
 	char_vector_remove(split + 0, 0);
 
+	//Concatenate the first four array values into the IP address
 	size_t i;
 	for (i = 0; i < 4; i++)
 	{
@@ -1136,7 +1347,7 @@ status_t pasv_command(session_t *session, string_t *host, uint16_t *port)
 		string_concatenate_char_array(host, ".");
 		string_uninitialize(split + i);
 	}
-	char_vector_pop_back(host);
+	char_vector_pop_back(host); //remove the last '.'
 
 	//The ')' is safe becase atoi stops at the first non-numeric character
 	*port = PORT_DIVISOR * atoi(string_c_str(split + len - 2)) +
@@ -1155,6 +1366,8 @@ status_t help_command(session_t *session, string_t *args, size_t length)
 {
 	status_t error;
 
+	//If the user provided other arguments, then append them all together to
+	//send as part of the HELP command
 	string_t *final_args;
 	if (length > 1)
 	{
@@ -1175,6 +1388,7 @@ status_t help_command(session_t *session, string_t *args, size_t length)
 	}
 	else
 	{
+		//otherwise, don't pass any arguments
 		final_args = NULL;
 	}
 
@@ -1216,6 +1430,8 @@ status_t quit_command(session_t *session)
 	{
 		goto exit0;
 	}
+
+	//QUIT can't return fatal error codes, and we're exiting anyway, so don't bother checking
 
 exit0:
 	string_uninitialize(&response);
@@ -1292,17 +1508,7 @@ status_t set_up_listen_socket(session_t *session, int *listen_socket, uint16_t
 {
 	status_t error = SUCCESS;
 
-	if (session->extended_mode)
-	{
-		af = AF_INET6;
-		address = session->ip6;
-	}
-	else
-	{
-		af = AF_INET;
-		address = session->ip4;
-	}
-
+	//create a TCP socket using the given protocol
 	*listen_socket = socket(af, SOCK_STREAM, 0);
 	if (*listen_socket < 0)
 	{
@@ -1310,31 +1516,35 @@ status_t set_up_listen_socket(session_t *session, int *listen_socket, uint16_t
 		goto exit_error0;
 	}
 
+	//use a sockaddr_in6 to supersed a sockaddr_in
 	struct sockaddr_in6 sad;
 	socklen_t size = sizeof sad;
 	memset(&sad, 0, size);
 	sad.sin6_family = af;
 	inet_pton(af, address, &sad.sin6_addr);
 
+	//bind the socket to a random available port (because sad.sin6_addr == 0)
 	if (bind(*listen_socket, (struct sockaddr *) &sad, size) < 0)
 	{
 		error = BIND_ERROR;
 		goto exit_error1;
 	}
 
+	//Make the socket listen
 	if (listen(*listen_socket, 1) < 0)
 	{
 		error = LISTEN_ERROR;
 		goto exit_error1;
 	}
 
+	//Get the socket name from the listen_sock to find out on which port it ended
+	//up listening
 	struct sockaddr_in port_sad;
 	if (getsockname(*listen_socket, (struct sockaddr *) &port_sad, &size) < 0)
 	{
 		error = SOCK_NAME_ERROR;
 		goto exit_error1;
 	}
-
 	*listen_port = ntohs(port_sad.sin_port);
 
 	//equivalent to return SUCCESS (and don't close the socket)
@@ -1342,8 +1552,100 @@ status_t set_up_listen_socket(session_t *session, int *listen_socket, uint16_t
 
 exit_error1:
 	close(*listen_socket);
+
 exit_error0:
 exit_success:
+	return error;
+}
+
+status_t get_data_socket_active(session_t *session, int *data_socket,
+	status_t (send_the_command)(session_t *, string_t *), string_t *args)
+{
+	status_t error;
+
+	int listen_socket;
+	error = port_command(session, &listen_socket);
+	if (error)
+	{
+		goto exit0;
+	}
+
+	//send the first command (i.e., LIST) so that the server can know to start
+	//trying to connect
+	error = (*send_the_command)(session, args);//send_list_command(session, final_args);
+	if (error)
+	{
+		goto exit1;
+	}
+
+	struct sockaddr_in6 cad;
+	socklen_t cadlen = sizeof cad;
+	*data_socket = accept(listen_socket, (struct sockaddr *) &cad, &cadlen);
+	if (*data_socket < 0)
+	{
+		error = ACCEPT_ERROR;
+		goto exit1;
+	}
+
+	char message[] = "Accepted connection on data socket.\n";
+	error = write_log(session, message, sizeof message - 1);
+	if (error)
+	{
+		close(data_socket);
+		goto exit1;
+	}
+
+exit1:
+	close(listen_socket);
+exit0:
+	return error;
+}
+
+status_t get_data_socket_passive(session_t *session, int *data_socket, status_t
+		(send_the_command)(session_t *, string_t *), string_t *args)
+{
+	status_t error;
+
+	string_t host;
+	string_initialize(&host);
+	uint16_t port;
+
+	error = pasv_command(session, &host, &port);
+	if (error)
+	{
+		goto exit_error0;
+	}
+
+	error = make_connection(data_socket, string_c_str(&host), port);
+	if (error)
+	{
+		goto exit_error0;
+	}
+
+	char message[] = "Made connection to server for data socket.\n";
+	error = write_log(session, message, sizeof message - 1);
+	if (error)
+	{
+		goto exit_error1;
+	}
+
+	//Send the initial command so that the server will start listening on the
+	//socket
+	error = (*send_the_command)(session, args);
+	if (error)
+	{
+		goto exit_error1;
+	}
+
+	//equivalent to return SUCCESS; (skips closing the data_socket);
+	goto exit_success0;
+
+exit_error1:
+	close(*data_socket);
+
+exit_error0:
+exit_success0:
+	string_uninitialize(&host);
 	return error;
 }
 
@@ -1371,6 +1673,12 @@ status_t send_command(session_t *session, command_t *command)
 		goto exit0;
 	}
 
+	error = write_sent_message_to_log(session, &command_string);
+	if (error)
+	{
+		goto exit0;
+	}
+
 exit0:
 	string_uninitialize(&command_string);
 	return error;
@@ -1391,6 +1699,9 @@ status_t read_entire_response(session_t *session, string_t *response)
 
 	if (char_vector_get(response, 3) == '-')
 	{
+		//if the fourth character (i.e. index 3) is a '-', then the response is
+		//multiline. Multiline responses are delineated in a special way, so
+		//pass them off here to read the rest of it
 		error = read_remaining_lines(session->command_socket, response);
 		if (error)
 		{
@@ -1444,6 +1755,8 @@ status_t read_single_line(int socket, string_t *line)
 	status_t error;
 	char c;
 	
+	//Read one character first so that the check that the last two characters
+	//are '\r' and '\n' below is valid
 	error = read_single_character(socket, &c);
 	if (error)
 	{
@@ -1464,6 +1777,7 @@ status_t read_single_line(int socket, string_t *line)
 		last_index++;
 	} while (char_vector_get(line, last_index - 1) != '\r' ||
 	         char_vector_get(line, last_index) != '\n');
+	//keep reading until a '\r' and then a '\n' are found
 
 exit0:
 	return error;
@@ -1548,7 +1862,7 @@ uint8_t bool_strcmp(char *s1, char *s2)
 	return strcmp(s1, s2) == 0;
 }
 
-status_t write_log(session_t *session, string_t *message)
+status_t write_log(session_t *session, char *message, size_t length)
 {
 	status_t error = SUCCESS;
 
@@ -1574,7 +1888,7 @@ status_t write_log(session_t *session, string_t *message)
 		goto exit0;
 	}
 
-	if (write(session->log_file, string_c_str(message), string_length(message)) < 0)
+	if (write(session->log_file, message, length) < 0)
 	{
 		error = FILE_WRITE_ERROR;
 		goto exit0;
@@ -1592,16 +1906,30 @@ exit0:
 
 status_t write_received_message_to_log(session_t *session, string_t *message)
 {
+	char received[] = "Received: ";
+	return prepend_and_write_to_log(session, message, received,
+		sizeof received - 1);
+}
+
+status_t write_sent_message_to_log(session_t *session, string_t *message)
+{
+	char received[] = "Sent: ";
+	return prepend_and_write_to_log(session, message, received,
+		sizeof received - 1);
+}
+
+status_t prepend_and_write_to_log(session_t *session, string_t *message, char
+	*prepend, size_t size)
+{
 	status_t error = SUCCESS;
 
 	string_t final_message;
 	string_initialize(&final_message);
-	char received[] = "Received: ";
-	string_assign_from_char_array_with_size(&final_message, received, sizeof
-		received - 1); //-1 for '\0'
+	string_assign_from_char_array_with_size(&final_message, prepend, size);
 	string_concatenate(&final_message, message);
 
-	error = write_log(session, &final_message);
+	error = write_log(session, string_c_str(&final_message),
+		string_length(&final_message));
 	if (error)
 	{
 		goto exit0;
@@ -1610,6 +1938,7 @@ status_t write_received_message_to_log(session_t *session, string_t *message)
 exit0:
 	string_uninitialize(&final_message);
 	return error;
+
 }
 
 void print_error_message(status_t error)
@@ -1622,8 +1951,7 @@ void print_error_message(status_t error)
 			//let specific cases handle in main
 			break;
 		case FILE_OPEN_ERROR:
-			//there's only one case of file open error,
-			//and it can be handled locally
+			printf("Could not open file for writing.\n");
 			break;
 		case FILE_WRITE_ERROR:
 			printf("Could not write to log file.\n");
