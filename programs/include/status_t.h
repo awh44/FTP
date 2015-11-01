@@ -21,6 +21,7 @@ typedef enum
 	TIME_GET_ERROR,
 	TIME_STRING_ERROR,
 	NON_FATAL_ERROR,
+	PTHREAD_CREATE_ERROR,
 } status_t;
 
 void print_error_message(status_t error);

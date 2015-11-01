@@ -1,11 +1,13 @@
 CC=gcc
-COMMON_OPTS=-Iinclude/ -o$@
+COMMON_OPTS=-Iinclude/ -o$@ $(DEBUG)
 COMMON_DEPENDENCIES=bin/string_t.o bin/status_t.o
-BIN_OPTS=$(COMMON_OPTS) -c $?
+BIN_OPTS=$(COMMON_OPTS) -c $^
 PROG_OPTS=$(COMMON_OPTS) $^
 
+all: ftpserver ftpclient
+
 ftpserver: bin/ftpserver.o $(COMMON_DEPENDENCIES)
-	$(CC) $(PROG_OPTS)
+	$(CC) $(PROG_OPTS) -lpthread 
 
 ftpclient: bin/ftpclient.o $(COMMON_DEPENDENCIES)
 	$(CC) $(PROG_OPTS)

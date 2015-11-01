@@ -1,5 +1,4 @@
 #include <arpa/inet.h>
-#include <errno.h>
 #include <fcntl.h>
 #include <ifaddrs.h>
 #include <limits.h>

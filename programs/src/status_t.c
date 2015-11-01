@@ -60,6 +60,9 @@ void print_error_message(status_t error)
 		case NON_FATAL_ERROR:
 			//non fatal error - don't need to let user know
 			break;
+		case PTHREAD_CREATE_ERROR:
+			printf("Could not create pthtread.\n");
+			break;
 		default:
 			printf("Unknown error: %u\n", error);
 			break;
