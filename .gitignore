@@ -1,5 +1,6 @@
 wiresharks/
 ftpclient
+ftpserver
 bin/
 *.swp
 log

@@ -1,14 +1,26 @@
 CC=gcc
-OPTS=-Iinclude/ -c -o$@ $?
+COMMON_OPTS=-Iinclude/ -o$@
+COMMON_DEPENDENCIES=bin/string_t.o bin/status_t.o
+BIN_OPTS=$(COMMON_OPTS) -c $?
+PROG_OPTS=$(COMMON_OPTS) $^
 
-ftpclient: bin/ftpclient.o bin/string_t.o
-	$(CC) -o$@ bin/*
+ftpserver: bin/ftpserver.o $(COMMON_DEPENDENCIES)
+	$(CC) $(PROG_OPTS)
+
+ftpclient: bin/ftpclient.o $(COMMON_DEPENDENCIES)
+	$(CC) $(PROG_OPTS)
+
+bin/ftpserver.o: src/ftpserver.c
+	$(CC) $(BIN_OPTS)
 
 bin/ftpclient.o: src/ftpclient.c
-	$(CC) $(OPTS)
+	$(CC) $(BIN_OPTS)
 
 bin/string_t.o: src/string_t.c
-	$(CC) $(OPTS)
+	$(CC) $(BIN_OPTS)
+
+bin/status_t.o: src/status_t.c
+	$(CC) $(BIN_OPTS)
 
 clean:
-	rm -rf bin/* ftpclient
+	rm -rf bin/* ftpclient ftpserver
