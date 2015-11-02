@@ -74,6 +74,11 @@ status_t handle_unrecognized_command(user_session_t *session, string_t *args, si
 uint8_t bool_strcmp(char *s1, char *s2);
 uint8_t is_directory(char *dir);
 
+status_t send_200(user_session_t *session)
+{
+	return send_response(session->command_sock, COMMAND_OKAY, "Command okay.", session->log);
+}
+
 status_t send_221(user_session_t *session)
 {
 	return send_response(session->command_sock, CLOSING_CONNECTION, "Goodbye.", session->log);
@@ -82,6 +87,18 @@ status_t send_221(user_session_t *session)
 status_t send_250(user_session_t *session)
 {
 	return send_response(session->command_sock, FILE_ACTION_COMPLETED, "Action successful.", session->log);
+}
+
+status_t send_257(user_session_t *session)
+{
+	string_t wd;
+	string_initialize(&wd);
+	string_assign_from_char_array(&wd, "\"");
+	string_concatenate_char_array(&wd, session->directory);
+	string_concatenate_char_array(&wd, "\"");
+
+	status_t error = send_response(session->command_sock, PATH_CREATED,
+			string_c_str(&wd), session->log);
 }
 
 status_t send_330(user_session_t *session)
@@ -599,6 +616,38 @@ exit0:
 
 status_t handle_cdup_command(user_session_t *session, string_t *args, size_t len)
 {
+	status_t error;
+	if (!session->logged_in)
+	{
+		error = send_530(session);
+		goto exit0;
+	}
+
+	string_t s;
+	string_initialize(&s);
+	string_assign_from_char_array(&s, session->directory);
+	string_concatenate_char_array_with_size(&s, "/..", 3);
+
+	char *resolved_dir = realpath(string_c_str(&s), NULL);
+	if (resolved_dir == NULL || !is_directory(resolved_dir))
+	{
+		error = send_550(session);
+		goto exit1;
+	}
+
+	free(session->directory);
+	session->directory = resolved_dir;
+
+	error = send_200(session);
+	if (error)
+	{
+		goto exit1;
+	}
+
+exit1:
+	string_uninitialize(&s);
+exit0:
+	return error;
 }
 
 status_t handle_quit_command(user_session_t *session, string_t *args, size_t len)
@@ -629,6 +678,7 @@ status_t handle_retr_command(user_session_t *session, string_t *args, size_t len
 
 status_t handle_pwd_command(user_session_t *session, string_t *args, size_t len)
 {
+	return send_257(session);
 }
 
 status_t handle_list_command(user_session_t *session, string_t *args, size_t len)
