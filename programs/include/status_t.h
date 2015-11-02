@@ -1,3 +1,6 @@
+#ifndef __STATUS_T_H__
+#define __STATUS_T_H__
+
 typedef enum
 {
 	SUCCESS = 0,
@@ -22,6 +25,19 @@ typedef enum
 	TIME_STRING_ERROR,
 	NON_FATAL_ERROR,
 	PTHREAD_CREATE_ERROR,
+	SOCKET_EOF,
 } status_t;
 
+/**
+  * given an error code, returns a generic, stock error message for that type
+  * @param error the error flag
+  */
+char *get_error_message(status_t error);
+
+/**
+  * given an error code, prints a generic, stock error message for that type
+  * @param error the error flag
+  */
 void print_error_message(status_t error);
+
+#endif

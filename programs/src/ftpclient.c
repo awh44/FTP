@@ -10,6 +10,8 @@
 #include <sys/socket.h>
 #include <time.h>
 
+#include "ftp.h"
+#include "log.h"
 #include "status_t.h"
 #include "string_t.h"
 
@@ -23,50 +25,9 @@
 	var.ident_n = sizeof command;\
 	var.args = str_args
 
-#define RESTART "110"
-#define SERVICE_READY_IN "120"
-#define TRANSFER_STARTING "125"
-#define FILE_STATUS_OKAY "150"
-#define COMMAND_OKAY "200"
-#define NOT_IMPLEMENTED_SUPERFLUOUS "202"
-#define SYSTEM_STATUS "211"
-#define DIRECTORY_STATUS "212"
-#define FILE_STATUS "213"
-#define HELP_MESSAGE "214"
-#define SYSTEM_NAME "215"
-#define SERVICE_READY "220"
-#define CLOSING_CONNECTION "221"
-#define CONNECTION_OPEN_NO_TRANSFER "225"
-#define CLOSING_DATA_CONNECTION "226"
-#define ENTERING_PASSIVE_MODE "227"
-#define USER_LOGGED_IN "230"
-#define FILE_ACTION_COMPLETED "250"
-#define PATH_CREATED "257"
-#define NEED_PASSWORD "331"
-#define NEED_ACCOUNT "332"
-#define PENDING_INFORMATION "350"
-#define SERVICE_NOT_AVAILABLE "421"
-#define CANT_OPEN_DATA_CONNECTION "425"
-#define CONNECTION_CLOSED "426"
-#define ACTION_NOT_TAKEN_FILE_UNAVAILABLE1 "450"
-#define ACTION_ABORTED_LOCAL_ERROR "451"
-#define NOT_TAKEN_INSUFFICIENT_STORAGE "452"
-#define COMMAND_UNRECOGNIZED "500"
-#define SYNTAX_ERROR "501"
-#define NOT_IMPLEMENTED "502"
-#define BAD_SEQUENCE "503"
-#define NOT_IMPLEMENTED_FOR_PARAMETER "504"
-#define NOT_LOGGED_IN "530"
-#define NEED_ACCOUNT_FOR_STORING "532"
-#define ACTION_NOT_TAKEN_FILE_UNAVAILABLE2 "550"
-#define ACTION_ABORTED "551"
-#define FILE_ACTION_ABORTED "552"
-#define FILE_NAME_NOT_ALLOWED "553"
-
 typedef struct
 {
 	int command_socket;
-	int data_socket;
 	int log_file;
 	char *ip4;
 	char *ip6;
@@ -98,13 +59,6 @@ status_t parse_command_line(int argc, char *argv[], uint16_t *port);
   * @param port - the port number to which to connect (still in host order)
   */
 status_t make_connection(int *sock, char *host, uint16_t port);
-
-/**
-  * opens the file to be ussed for logging at file name filename
-  * @param fd       - out param; the file desrcriptor for the log file
-  * @param filename - the file name to use for the log file
-  */
-status_t open_log_file(int *fd, char *filename);
 
 /**
   * gets the IPv4 and IPv6 IP addresses, if available, by walking the ifaddrs
@@ -307,26 +261,12 @@ status_t read_entire_response(session_t *session, string_t *response);
 status_t send_command_read_response(session_t *session, command_t *command, string_t *response);
 
 /**
-  * reads from socket socket until a '\r\n' sequence is reached
-  * @param socket - socket from which to read
-  * @param line   - out param; the string into which to read. Must be initialized
-  */
-status_t read_single_line(int socket, string_t *line);
-
-/**
   * after reading the first line, will continue reading other lines of a
   * multi-line response from the server
   * @param socket   - socket from which to read
   * @param response - out param; the string into which to read. Must be initialized
   */
 status_t read_remaining_lines(int socket, string_t *response);
-
-/**
-  *	reads a single character from the socket
-  * @param socket - socket from which to read
-  * @param c      - pointer to character into which to read
-  */
-status_t read_single_character(int socket, char *c);
 
 /**
   * reads from the given socket utnil EOF is reached (i.e., read returns 0)
@@ -364,44 +304,6 @@ uint8_t bool_memcmp(char *s1, char *s2, size_t n);
   * 	terminator
   */
 uint8_t bool_strcmp(char *s1, char *s2);
-
-/**
-  * logs the message of length into the log file given by session
-  * @param session - the session in which the message will be written
-  * @param message - the messsage to write to the log
-  * @param length  - the length of the message
-  */
-status_t write_log(session_t *session, char *message, size_t length);
-
-/**
-  * write a "received" message to the log, with the received data
-  * @param session - current session
-  * @param message - the message received/to be written
-  */
-status_t write_received_message_to_log(session_t *session, string_t *message);
-
-/**
-  * write a "sent" message to the log, with the send data
-  * @param session - current session
-  * @param message - the message sent/to be written
-  */
-status_t write_sent_message_to_log(session_t *session, string_t *message);
-
-/**
-  * write a message to the log, prepended by "prepend" of length size
-  * @param session - current session
-  * @param message - the message to be written
-  * @param prepend - some data to prepend to the message
-  * @param size    - the length of prepend
-  */
-status_t prepend_and_write_to_log(session_t *session, string_t *message, char
-	*prepend, size_t size);
-
-/**
-  * given an error code, prints a generic, stock error message for that type
-  * @param error the error flag
-  */
-void print_error_message(status_t error);
 //----------------------------END HELPER FUNCTIONS------------------------------
 
 int main(int argc, char *argv[])
@@ -536,19 +438,6 @@ status_t make_connection(int *sock, char *host_str, uint16_t port)
 	{
 		close(*sock);
 		return CONNECTION_ERROR;
-	}
-
-	return SUCCESS;
-}
-
-status_t open_log_file(int *fd, char *filename)
-{
-	//Create the file if it doesn't exist, and always append new logs to the end
-	//of the file
-	if ((*fd = open(filename, O_WRONLY | O_CREAT | O_APPEND, 0600)) < 0)
-	{
-		printf("Could not open log file.\n");
-		return FILE_OPEN_ERROR;
 	}
 
 	return SUCCESS;
@@ -970,7 +859,7 @@ exit2:
 	string_uninitialize(&response);
 exit1:
 	string_uninitialize(&data);
-	write_log(session, closing_message , sizeof closing_message - 1);
+	write_log(session->log_file, closing_message , sizeof closing_message - 1);
 	close(data_socket);
 exit0:
 	return error;
@@ -1075,7 +964,7 @@ exit2:
 	string_uninitialize(&response);
 exit1:
 	string_uninitialize(&data);
-	error = write_log(session, closing_message , sizeof closing_message - 1);
+	error = write_log(session->log_file, closing_message , sizeof closing_message - 1);
 	close(data_socket);
 exit0:
 	return error;
@@ -1569,7 +1458,7 @@ status_t get_data_socket_active(session_t *session, int *data_socket,
 	}
 
 	char message[] = "Accepted connection on data socket.\n";
-	error = write_log(session, message, sizeof message - 1);
+	error = write_log(session->log_file, message, sizeof message - 1);
 	if (error)
 	{
 		close(data_socket);
@@ -1604,7 +1493,7 @@ status_t get_data_socket_passive(session_t *session, int *data_socket, status_t
 	}
 
 	char message[] = "Made connection to server for data socket.\n";
-	error = write_log(session, message, sizeof message - 1);
+	error = write_log(session->log_file, message, sizeof message - 1);
 	if (error)
 	{
 		goto exit_error1;
@@ -1646,15 +1535,7 @@ status_t send_command(session_t *session, command_t *command)
 	}
 	string_concatenate_char_array(&command_string, "\r\n");
 
-	if (write(session->command_socket,
-	          string_c_str(&command_string),
-	          string_length(&command_string)) < 0)
-	{
-		error = SOCKET_WRITE_ERROR;
-		goto exit0;
-	}
-
-	error = write_sent_message_to_log(session, &command_string);
+	error = send_string(session->command_socket, &command_string, session->log_file);
 	if (error)
 	{
 		goto exit0;
@@ -1693,7 +1574,7 @@ status_t read_entire_response(session_t *session, string_t *response)
 	char *c_str = string_c_str(response);
 	printf("%s", c_str);
 	
-	error = write_received_message_to_log(session, response);
+	error = write_received_message_to_log(session->log_file, response);
 	if (error)
 	{
 		goto exit0;
@@ -1731,39 +1612,6 @@ exit0:
 	return error;
 }
 
-status_t read_single_line(int socket, string_t *line)
-{
-	status_t error;
-	char c;
-	
-	//Read one character first so that the check that the last two characters
-	//are '\r' and '\n' below is valid
-	error = read_single_character(socket, &c);
-	if (error)
-	{
-		goto exit0;
-	}
-	char_vector_push_back(line, c);
-
-	size_t last_index = 0;
-	do
-	{
-		error = read_single_character(socket, &c);
-		if (error)
-		{
-			goto exit0;
-		}
-
-		char_vector_push_back(line, c);
-		last_index++;
-	} while (char_vector_get(line, last_index - 1) != '\r' ||
-	         char_vector_get(line, last_index) != '\n');
-	//keep reading until a '\r' and then a '\n' are found
-
-exit0:
-	return error;
-}
-
 status_t read_remaining_lines(int socket, string_t *response)
 {
 	status_t error;
@@ -1789,17 +1637,6 @@ status_t read_remaining_lines(int socket, string_t *response)
 exit0:
 	string_uninitialize(&line);
 	return error;
-}
-
-status_t read_single_character(int socket, char *c)
-{
-	ssize_t bytes_read;
-	if ((bytes_read = read(socket, c, 1)) < 0)
-	{
-		return SOCKET_READ_ERROR;
-	}
-
-	return SUCCESS;
 }
 
 status_t read_until_eof(int socket, string_t *response)
@@ -1841,83 +1678,4 @@ uint8_t bool_memcmp(char *s1, char *s2, size_t n)
 uint8_t bool_strcmp(char *s1, char *s2)
 {
 	return strcmp(s1, s2) == 0;
-}
-
-status_t write_log(session_t *session, char *message, size_t length)
-{
-	status_t error = SUCCESS;
-
-	time_t time_val = time(NULL);
-	if (time_val < 0)
-	{
-		error = TIME_GET_ERROR;
-		goto exit0;
-	}
-
-	char *time_val_string = ctime(&time_val);
-	if (time_val_string == NULL)
-	{
-		error = TIME_STRING_ERROR;
-		goto exit0;
-	}
-	size_t time_len = strlen(time_val_string);
-	time_val_string[time_len - 1] = ' ';
-
-	if (write(session->log_file, time_val_string, time_len) < 0)
-	{
-		error = FILE_WRITE_ERROR;
-		goto exit0;
-	}
-
-	if (write(session->log_file, message, length) < 0)
-	{
-		error = FILE_WRITE_ERROR;
-		goto exit0;
-	}
-
-	if (write(session->log_file, "\n", 1) < 0)
-	{
-		error = FILE_WRITE_ERROR;
-		goto exit0;
-	}
-
-exit0:
-	return error;
-}
-
-status_t write_received_message_to_log(session_t *session, string_t *message)
-{
-	char received[] = "Received: ";
-	return prepend_and_write_to_log(session, message, received,
-		sizeof received - 1);
-}
-
-status_t write_sent_message_to_log(session_t *session, string_t *message)
-{
-	char received[] = "Sent: ";
-	return prepend_and_write_to_log(session, message, received,
-		sizeof received - 1);
-}
-
-status_t prepend_and_write_to_log(session_t *session, string_t *message, char
-	*prepend, size_t size)
-{
-	status_t error = SUCCESS;
-
-	string_t final_message;
-	string_initialize(&final_message);
-	string_assign_from_char_array_with_size(&final_message, prepend, size);
-	string_concatenate(&final_message, message);
-
-	error = write_log(session, string_c_str(&final_message),
-		string_length(&final_message));
-	if (error)
-	{
-		goto exit0;
-	}
-
-exit0:
-	string_uninitialize(&final_message);
-	return error;
-
 }
