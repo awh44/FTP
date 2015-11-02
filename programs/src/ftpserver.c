@@ -20,6 +20,10 @@
 
 #define MAX_USERS 30
 
+#define HELP_STRING "CDUP CWD EPRT EPSV\r\n"\
+	"HELP LIST PASS PASV\r\n"\
+	"PORT PWD QUIT RETR USER"
+
 typedef struct
 {
 	int log_file;
@@ -53,7 +57,7 @@ status_t parse_command_line(int argc, char *argv[], uint16_t *port);
 status_t get_accounts(accounts_table_t *accounts);
 status_t free_accounts(accounts_table_t *accounts);
 
-status_t send_response(int sock, char *code, char *message, log_t *log);
+status_t send_response(int sock, char *code, char *message, log_t *log, uint8_t multiline);
 
 void *client_handler(void *void_args);
 status_t handle_user_command(user_session_t *session, string_t *args, size_t len);
@@ -76,17 +80,22 @@ uint8_t is_directory(char *dir);
 
 status_t send_200(user_session_t *session)
 {
-	return send_response(session->command_sock, COMMAND_OKAY, "Command okay.", session->log);
+	return send_response(session->command_sock, COMMAND_OKAY, "Command okay.", session->log, 0);
+}
+
+status_t send_214(user_session_t *session)
+{
+	return send_response(session->command_sock, HELP_MESSAGE, HELP_STRING, session->log, 1);
 }
 
 status_t send_221(user_session_t *session)
 {
-	return send_response(session->command_sock, CLOSING_CONNECTION, "Goodbye.", session->log);
+	return send_response(session->command_sock, CLOSING_CONNECTION, "Goodbye.", session->log, 0);
 }
 
 status_t send_250(user_session_t *session)
 {
-	return send_response(session->command_sock, FILE_ACTION_COMPLETED, "Action successful.", session->log);
+	return send_response(session->command_sock, FILE_ACTION_COMPLETED, "Action successful.", session->log, 0);
 }
 
 status_t send_257(user_session_t *session)
@@ -97,8 +106,7 @@ status_t send_257(user_session_t *session)
 	string_concatenate_char_array(&wd, session->directory);
 	string_concatenate_char_array(&wd, "\"");
 
-	status_t error = send_response(session->command_sock, PATH_CREATED,
-			string_c_str(&wd), session->log);
+	status_t error = send_response(session->command_sock, PATH_CREATED, string_c_str(&wd), session->log, 0);
 
 	string_uninitialize(&wd);
 	return error;
@@ -106,32 +114,37 @@ status_t send_257(user_session_t *session)
 
 status_t send_330(user_session_t *session)
 {
-	return send_response(session->command_sock, USER_LOGGED_IN, "Logged in.", session->log);
+	return send_response(session->command_sock, USER_LOGGED_IN, "Logged in.", session->log, 0);
 }
 
 status_t send_331(user_session_t *session)
 {
-	return send_response(session->command_sock, NEED_PASSWORD, "Username good. Please send password.", session->log);
+	return send_response(session->command_sock, NEED_PASSWORD, "Username good. Please send password.", session->log, 0);
 }
 
 status_t send_501(user_session_t *session)
 {
-	return send_response(session->command_sock, SYNTAX_ERROR, "Error in command parameters.", session->log);
+	return send_response(session->command_sock, SYNTAX_ERROR, "Error in command parameters.", session->log, 0);
+}
+
+status_t send_502(user_session_t *session)
+{
+	return send_response(session->command_sock, NOT_IMPLEMENTED, "Given command not implemented.", session->log, 0);
 }
 
 status_t send_503(user_session_t *session)
 {
-	return send_response(session->command_sock, BAD_SEQUENCE, "Please check the command sequence.", session->log);
+	return send_response(session->command_sock, BAD_SEQUENCE, "Please check the command sequence.", session->log, 0);
 }
 
 status_t send_530(user_session_t *session)
 {
-	return send_response(session->command_sock, NOT_LOGGED_IN, "Not logged in.", session->log);
+	return send_response(session->command_sock, NOT_LOGGED_IN, "Not logged in.", session->log, 0);
 }
 
 status_t send_550(user_session_t *session)
 {
-	return send_response(session->command_sock, ACTION_NOT_TAKEN_FILE_UNAVAILABLE2, "Requested action not completed.", session->log);
+	return send_response(session->command_sock, ACTION_NOT_TAKEN_FILE_UNAVAILABLE2, "Requested action not completed.", session->log, 0);
 }
 
 int main(int argc, char *argv[])
@@ -186,7 +199,7 @@ int main(int argc, char *argv[])
 
 	struct sockaddr_in cad;
 	socklen_t clilen = sizeof cad;
-
+	printf("%s\n", HELP_STRING);
 	while (1)
 	{
 		int connection_sock = accept(listen_sock, (struct sockaddr *) &cad, &clilen);
@@ -207,8 +220,7 @@ int main(int argc, char *argv[])
 			{
 				print_error_message(PTHREAD_CREATE_ERROR);
 				
-				error = send_response(connection_sock, SERVICE_NOT_AVAILABLE,
-					"Could not establish a session.", &log);
+				error = send_response(connection_sock, SERVICE_NOT_AVAILABLE, "Could not establish a session.", &log, 0);
 				print_error_message(error);
 			}
 		}
@@ -376,8 +388,7 @@ void *client_handler(void *void_args)
 		goto exit0;
 	}
 
-	error = send_response(session->command_sock, SERVICE_READY,
-		"Ready. Please send USER.", session->log);
+	error = send_response(session->command_sock, SERVICE_READY, "Ready. Please send USER.", session->log, 0);
 	if (error)
 	{
 		goto exit1;
@@ -681,6 +692,9 @@ status_t handle_retr_command(user_session_t *session, string_t *args, size_t len
 
 status_t handle_pwd_command(user_session_t *session, string_t *args, size_t len)
 {
+	//This command cannot return "not logged in" error messages, and the only
+	//other errors are "syntax errors." Ignore any possible "syntax errors" in
+	//the args > 0 and just send the PWD
 	return send_257(session);
 }
 
@@ -690,22 +704,43 @@ status_t handle_list_command(user_session_t *session, string_t *args, size_t len
 
 status_t handle_help_command(user_session_t *session, string_t *args, size_t len)
 {
+	//This command cannot return "not logged in" error messages, and the only
+	//other errors are "syntax errors." Ignore any possible "syntax errors" in
+	//the args > 0 and just send the HELP
+	return send_214(session);
 }
 
 status_t handle_unrecognized_command(user_session_t *session, string_t *args, size_t len)
 {
+	return send_502(session);
 }
 
-status_t send_response(int sock, char *code, char *message, log_t *log)
+status_t send_response(int sock, char *code, char *message, log_t *log, uint8_t multiline)
 {
 	status_t error;
+
+	char sep;
+	if (multiline)
+	{
+		sep = '-';
+	}
+	else
+	{
+		sep = ' ';
+	}
 
 	string_t response;
 	string_initialize(&response);
 	string_assign_from_char_array_with_size(&response, code, 3);
-	string_concatenate_char_array_with_size(&response, " ", 1);
+	char_vector_push_back(&response, sep);
 	string_concatenate_char_array(&response, message);
 	string_concatenate_char_array(&response, "\r\n");
+
+	if (multiline)
+	{
+		string_concatenate_char_array_with_size(&response, code, 3);
+		string_concatenate_char_array_with_size(&response, " \r\n", 3);
+	}
 
 	error = send_string(sock, &response, log->log_file);
 	if (error)
