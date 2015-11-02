@@ -99,6 +99,9 @@ status_t send_257(user_session_t *session)
 
 	status_t error = send_response(session->command_sock, PATH_CREATED,
 			string_c_str(&wd), session->log);
+
+	string_uninitialize(&wd);
+	return error;
 }
 
 status_t send_330(user_session_t *session)
