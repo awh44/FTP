@@ -26,6 +26,7 @@ typedef enum
 	NON_FATAL_ERROR,
 	PTHREAD_CREATE_ERROR,
 	SOCKET_EOF,
+	REALPATH_ERROR,
 } status_t;
 
 /**

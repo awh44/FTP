@@ -8,6 +8,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/socket.h>
+#include <sys/stat.h>
 #include <time.h>
 
 #include "ftp.h"
@@ -45,6 +46,7 @@ typedef struct
 	accounts_table_t *accounts;
 	account_t *account;
 	uint8_t logged_in;
+	char *directory;
 } user_session_t;
 
 status_t parse_command_line(int argc, char *argv[], uint16_t *port);
@@ -70,10 +72,16 @@ status_t handle_help_command(user_session_t *session, string_t *args, size_t len
 status_t handle_unrecognized_command(user_session_t *session, string_t *args, size_t len);
 
 uint8_t bool_strcmp(char *s1, char *s2);
+uint8_t is_directory(char *dir);
 
 status_t send_221(user_session_t *session)
 {
 	return send_response(session->command_sock, CLOSING_CONNECTION, "Goodbye.", session->log);
+}
+
+status_t send_250(user_session_t *session)
+{
+	return send_response(session->command_sock, FILE_ACTION_COMPLETED, "Action successful.", session->log);
 }
 
 status_t send_330(user_session_t *session)
@@ -99,6 +107,11 @@ status_t send_503(user_session_t *session)
 status_t send_530(user_session_t *session)
 {
 	return send_response(session->command_sock, NOT_LOGGED_IN, "Not logged in.", session->log);
+}
+
+status_t send_550(user_session_t *session)
+{
+	return send_response(session->command_sock, ACTION_NOT_TAKEN_FILE_UNAVAILABLE2, "Requested action not completed.", session->log);
 }
 
 int main(int argc, char *argv[])
@@ -336,11 +349,18 @@ void *client_handler(void *void_args)
 	user_session_t *session = (user_session_t *) void_args;
 	status_t error;
 
+	session->directory = realpath(".", NULL);
+	if (session->directory == NULL)
+	{
+		error = REALPATH_ERROR;
+		goto exit0;
+	}
+
 	error = send_response(session->command_sock, SERVICE_READY,
 		"Ready. Please send USER.", session->log);
 	if (error)
 	{
-		goto exit0;
+		goto exit1;
 	}
 
 	string_t command;
@@ -424,8 +444,10 @@ void *client_handler(void *void_args)
 		}
 	} while (!error && !done);
 
-exit1:
+exit2:
 	string_uninitialize(&command);
+exit1:
+	free(session->directory);
 exit0:
 	printf("Client quitting.\n");
 	free(session);
@@ -523,39 +545,100 @@ exit0:
 
 status_t handle_cwd_command(user_session_t *session, string_t *args, size_t len)
 {
+	status_t error;
+
+	if (!session->logged_in)
+	{
+		error = send_530(session);
+		goto exit0;
+	}
+
+	if (len < 2)
+	{
+		error = send_501(session);
+		goto exit0;
+	}
+
+	string_t new_dir;
+	string_initialize(&new_dir);
+
+	char *first_c_str = string_c_str(args + 1);
+	if (first_c_str[0] != '/' && first_c_str[0] != '~')
+	{
+		string_assign_from_char_array(&new_dir, session->directory);
+		char_vector_push_back(&new_dir, '/');
+	}
+
+	size_t i;
+	for (i = 1; i < len; i++)
+	{
+		string_concatenate(&new_dir, args + i);
+	}
+
+	char *resolved_dir = realpath(string_c_str(&new_dir), NULL);
+	if (resolved_dir == NULL || !is_directory(resolved_dir))
+	{
+		error = send_550(session);
+		goto exit1;
+	}
+
+	free(session->directory);
+	session->directory = resolved_dir;
+
+	error = send_250(session);
+	if (error)
+	{
+		goto exit1;
+	}
+
+exit1:
+	string_uninitialize(&new_dir);
+exit0:
+	return error;
 }
+
 status_t handle_cdup_command(user_session_t *session, string_t *args, size_t len)
 {
 }
+
 status_t handle_quit_command(user_session_t *session, string_t *args, size_t len)
 {
 	session->logged_in = 0;
 	return send_221(session);
 }
+
 status_t handle_pasv_command(user_session_t *session, string_t *args, size_t len)
 {
 }
+
 status_t handle_epsv_command(user_session_t *session, string_t *args, size_t len)
 {
 }
+
 status_t handle_port_command(user_session_t *session, string_t *args, size_t len)
 {
 }
+
 status_t handle_eprt_command(user_session_t *session, string_t *args, size_t len)
 {
 }
+
 status_t handle_retr_command(user_session_t *session, string_t *args, size_t len)
 {
 }
+
 status_t handle_pwd_command(user_session_t *session, string_t *args, size_t len)
 {
 }
+
 status_t handle_list_command(user_session_t *session, string_t *args, size_t len)
 {
 }
+
 status_t handle_help_command(user_session_t *session, string_t *args, size_t len)
 {
 }
+
 status_t handle_unrecognized_command(user_session_t *session, string_t *args, size_t len)
 {
 }
@@ -590,4 +673,15 @@ uint8_t bool_memcmp(char *s1, char *s2, size_t n)
 uint8_t bool_strcmp(char *s1, char *s2)
 {
 	return strcmp(s1, s2) == 0;
+}
+
+uint8_t is_directory(char *dir)
+{
+	struct stat dirstat;
+	if (stat(dir, &dirstat) != 0)
+	{
+		return 0;
+	}
+
+	return S_ISDIR(dirstat.st_mode);
 }
