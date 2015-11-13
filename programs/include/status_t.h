@@ -1,6 +1,8 @@
 #ifndef __STATUS_T_H__
 #define __STATUS_T_H__
 
+#include "log.h"
+
 typedef enum
 {
 	SUCCESS = 0,
@@ -27,6 +29,7 @@ typedef enum
 	PTHREAD_CREATE_ERROR,
 	SOCKET_EOF,
 	REALPATH_ERROR,
+	LOCK_INIT_ERROR,
 } status_t;
 
 /**
@@ -40,5 +43,13 @@ char *get_error_message(status_t error);
   * @param error the error flag
   */
 void print_error_message(status_t error);
+
+/**
+  * Prints the given error message to the screen and also writes it to the given
+  * log
+  * @param error - the error code
+  * @param log - the log file to which to write
+  */
+//void print_and_log_error_message(status_t error, log_t *log);
 
 #endif

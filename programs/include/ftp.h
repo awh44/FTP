@@ -1,6 +1,7 @@
 #ifndef __FTP_H__
 #define __FTP_H__
 
+#include "log.h"
 #include "status_t.h"
 #include "string_t.h"
 
@@ -44,7 +45,9 @@
 #define FILE_ACTION_ABORTED "552"
 #define FILE_NAME_NOT_ALLOWED "553"
 
-status_t send_string(int sock, string_t *s, int log_file);
+#define PORT_DIVISOR 256
+
+status_t send_string(int sock, string_t *s, log_t *log);
 
 status_t read_line_strip_endings(int socket, string_t *line);
 
@@ -61,4 +64,35 @@ status_t read_single_line(int socket, string_t *response);
   * @param c      - pointer to character into which to read
   */
 status_t read_single_character(int socket, char *c);
+
+status_t parse_ip_and_port(string_t *split, size_t len, string_t *host, uint16_t *port);
+
+/**
+  * makes a connection to the given host on the given port, using socket sock
+  * @param sock - out param; the socket over which the connection will be made
+  * @param host - the host name to which to connect
+  * @param port - the port number to which to connect (still in host order)
+  */
+status_t make_connection(int *sock, char *host_str, uint16_t port);
+
+/**
+  * gets the IPv4 and IPv6 IP addresses, if available, by walking the ifaddrs
+  * list and sets them appropriately in session
+  * @param ip4 - pointer to the ip4 pointer to allocate and set
+  * @param ip6 - pointer to the ip6 pointer to allocate and set
+  */
+status_t get_ips(char **ip4, char **ip6);
+
+/**
+  * helper function for get_ips; if the host can be retrieved from ifa and does
+  * not equal localhost, then *hostptr is malloc'd and set
+  * @param ifa       - the ifaddrs object to get the host name from
+  * @param hostptr   - pointer to a character pointer which will be malloc'c and
+  * 	contain the name of the host upont success
+  * @param len       - the size of a sockaddr object
+  * @param localhost - the localhost to ignore if the hostname equals
+  */
+status_t try_set_hostname(struct ifaddrs *ifa, char **hostptr, size_t len,
+	char *localhost);
+
 #endif

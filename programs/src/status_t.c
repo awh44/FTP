@@ -1,4 +1,6 @@
 #include <stdio.h>
+
+#include "log.h"
 #include "status_t.h"
 
 char *get_error_message(status_t error)
@@ -47,9 +49,13 @@ char *get_error_message(status_t error)
 			return "Could not convert time to string for log fie.";
 		case NON_FATAL_ERROR:
 			//non fatal error - don't need to let user know
-			break;
+			return "A non-fatal error occurred.";
 		case PTHREAD_CREATE_ERROR:
 			return "Could not create pthtread.";
+		case SOCKET_EOF:
+			return "Socket end of file reached.";
+		case REALPATH_ERROR:
+			return "Could not determine path.";
 		default:
 			return "Unknown error";
 	}
@@ -61,3 +67,16 @@ void print_error_message(status_t error)
 	if (error_message != "")
 		printf("%s\n", error_message);
 }
+
+/*
+void print_and_log_error_message(status_t error, log_t *log)
+{
+	char *error_message = get_error_message(error);
+	size_t length = strlen(error_message);
+	if (length != 0)
+	{
+		printf("%s\n", error_message);
+		write_log(log, error_message, length);
+	}
+}
+*/

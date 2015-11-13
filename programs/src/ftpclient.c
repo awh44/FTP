@@ -17,7 +17,6 @@
 
 #define MINIMUM_ARGC 3
 #define DEFAULT_COMMAND_PORT 21
-#define PORT_DIVISOR 256
 
 #define MAKE_COMMAND_FROM_LITERAL(var, command, str_args)\
 	command_t var;\
@@ -28,7 +27,7 @@
 typedef struct
 {
 	int command_socket;
-	int log_file;
+	log_t log;
 	char *ip4;
 	char *ip6;
 	uint8_t passive_mode;
@@ -51,33 +50,6 @@ typedef struct
   * @param port - out param; the port number to be used for the FTP connection
   */
 status_t parse_command_line(int argc, char *argv[], uint16_t *port);
-
-/**
-  * makes a connection to the given host on the given port, using socket sock
-  * @param sock - out param; the socket over which the connection will be made
-  * @param host - the host name to which to connect
-  * @param port - the port number to which to connect (still in host order)
-  */
-status_t make_connection(int *sock, char *host, uint16_t port);
-
-/**
-  * gets the IPv4 and IPv6 IP addresses, if available, by walking the ifaddrs
-  * list and sets them appropriately in session
-  * @param session - session object; ip4 and ip6 pointers will be on success
-  */
-status_t get_ips(session_t *session);
-
-/**
-  * helpter function for get_ips; if the host can be retrieved from ifa and does
-  * not equal localhost, then *hostptr is malloc'd and set
-  * @param ifa       - the ifaddrs object to get the host name from
-  * @param hostptr   - pointer to a character pointer which will be malloc'c and
-  * 	contain the name of the host upont success
-  * @param len       - the size of a sockaddr object
-  * @param localhost - the localhost to ignore if the hostname equals
-  */
-status_t try_set_hostname(struct ifaddrs *ifa, char **hostptr, size_t len,
-	char *localhost);
 
 /**
   * actually begins the user's session by reading initial response, logging in,
@@ -324,13 +296,13 @@ int main(int argc, char *argv[])
 		goto exit0;
 	}
 
-	error = open_log_file(&session.log_file, argv[2]);
+	error = open_log_file(&session.log, argv[2], 0);
 	if (error)
 	{
 		goto exit1;
 	}
 
-	error = get_ips(&session);
+	error = get_ips(&session.ip4, &session.ip6);
 	if (error)
 	{
 		printf("Could not get IP information.\n");
@@ -377,7 +349,7 @@ exit3:
 	free(session.ip4);
 	free(session.ip6);
 exit2:
-	close(session.log_file);
+	close_log_file(&session.log);
 exit1:
 	close(session.command_socket);
 exit0:
@@ -410,127 +382,6 @@ status_t parse_command_line(int argc, char *argv[], uint16_t *port)
 	}
 
 	return SUCCESS;
-}
-
-status_t make_connection(int *sock, char *host_str, uint16_t port)
-{
-	//Convert the port to network (i.e., big endian) byte order
-	port = htons(port);
-	struct hostent *host = gethostbyname(host_str);
-	if (host == NULL)
-	{
-		return HOST_ERROR;
-	}
-
-	//Create an IPv4 TCP socket
-	if ((*sock = socket(AF_INET, SOCK_STREAM, 0)) < 0)
-	{
-		return SOCKET_OPEN_ERROR;
-	}
-
-	//Create the connection
-	struct sockaddr_in sad;
-	memset(&sad, 0, sizeof(sad));
-	sad.sin_family = AF_INET;
-	sad.sin_port = port;
-	memcpy(&sad.sin_addr, host->h_addr, host->h_length);
-	if (connect(*sock, (struct sockaddr *) &sad, sizeof(sad)) < 0)
-	{
-		close(*sock);
-		return CONNECTION_ERROR;
-	}
-
-	return SUCCESS;
-}
-
-status_t get_ips(session_t *session)
-{
-	status_t error = SUCCESS;
-	session->ip4 = NULL;
-	session->ip6 = NULL;
-	
-	struct ifaddrs *ifaddr;
-	if (getifaddrs(&ifaddr) < 0)
-	{
-		goto exit0;
-	}
-
-	struct ifaddrs *ifa;
-	for (ifa = ifaddr; ifa != NULL; ifa = ifa->ifa_next)
-	{
-		if (ifa->ifa_addr == NULL)
-		{
-			continue;
-		}
-
-		if (ifa->ifa_addr->sa_family == AF_INET && session->ip4 == NULL)
-		{
-			//try to set ip4 from ifa, ignoring the address if it's the loopback
-			//address
-			error = try_set_hostname(ifa, &session->ip4, sizeof(struct sockaddr_in),
-				"127.0.0.1");
-			if (error)
-			{
-				free(session->ip6);
-				goto exit1;
-			}
-		}
-		else if (ifa->ifa_addr->sa_family == AF_INET6 && session->ip6 == NULL)
-		{
-			//try to set ip6 from ifa, ignoring the address if it's the loopback
-			//address
-			error = try_set_hostname(ifa, &session->ip6, sizeof(struct sockaddr_in6),
-				"::1");
-			if (error)
-			{
-				free(session->ip4);
-				goto exit1;
-			}
-		}
-	}
-
-exit1:
-	freeifaddrs(ifaddr);
-exit0:
-	return error;
-}
-
-status_t try_set_hostname(struct ifaddrs *ifa, char **hostptr, size_t sockaddr_len, char *localhost)
-{
-	status_t error = SUCCESS;
-
-	char host[NI_MAXHOST];
-	int result = getnameinfo
-	(
-		ifa->ifa_addr,
-		sockaddr_len,
-		host,
-		NI_MAXHOST,
-		NULL,
-		0,
-		NI_NUMERICHOST
-	);
-
-	if (result != 0)
-	{
-		error = GET_NAME_ERROR;
-		goto exit0;
-	}
-
-	//Ignore localhosts
-	if (strcmp(host, localhost) != 0)
-	{
-		*hostptr = malloc(NI_MAXHOST);
-		if (*hostptr == NULL)
-		{
-			error = MEMORY_ERROR;
-			goto exit0;
-		}
-		strcpy(*hostptr, host);
-	}
-
-exit0:
-	return error;
 }
 
 status_t do_session(session_t *session)
@@ -859,7 +710,7 @@ exit2:
 	string_uninitialize(&response);
 exit1:
 	string_uninitialize(&data);
-	write_log(session->log_file, closing_message , sizeof closing_message - 1);
+	write_log(&session->log, closing_message , sizeof closing_message - 1);
 	close(data_socket);
 exit0:
 	return error;
@@ -964,7 +815,7 @@ exit2:
 	string_uninitialize(&response);
 exit1:
 	string_uninitialize(&data);
-	error = write_log(session->log_file, closing_message , sizeof closing_message - 1);
+	error = write_log(&session->log, closing_message , sizeof closing_message - 1);
 	close(data_socket);
 exit0:
 	return error;
@@ -1205,23 +1056,11 @@ status_t pasv_command(session_t *session, string_t *host, uint16_t *port)
 	}
 	char_vector_remove(split + 0, 0);
 
-	//Concatenate the first four array values into the IP address
-	size_t i;
-	for (i = 0; i < 4; i++)
+	error = parse_ip_and_port(split, len, host, port);
+	if (error)
 	{
-		string_concatenate(host, split + i);
-		string_concatenate_char_array(host, ".");
-		string_uninitialize(split + i);
+		goto exit0;
 	}
-	char_vector_pop_back(host); //remove the last '.'
-
-	//The ')' is safe becase atoi stops at the first non-numeric character
-	*port = PORT_DIVISOR * atoi(string_c_str(split + len - 2)) +
-		atoi(string_c_str(split + len - 1));
-	
-	string_uninitialize(split + len - 2);
-	string_uninitialize(split + len - 1);
-	free(split);
 
 exit0:
 	string_uninitialize(&response);
@@ -1458,7 +1297,7 @@ status_t get_data_socket_active(session_t *session, int *data_socket,
 	}
 
 	char message[] = "Accepted connection on data socket.\n";
-	error = write_log(session->log_file, message, sizeof message - 1);
+	error = write_log(&session->log, message, sizeof message - 1);
 	if (error)
 	{
 		close(data_socket);
@@ -1493,7 +1332,7 @@ status_t get_data_socket_passive(session_t *session, int *data_socket, status_t
 	}
 
 	char message[] = "Made connection to server for data socket.\n";
-	error = write_log(session->log_file, message, sizeof message - 1);
+	error = write_log(&session->log, message, sizeof message - 1);
 	if (error)
 	{
 		goto exit_error1;
@@ -1535,7 +1374,7 @@ status_t send_command(session_t *session, command_t *command)
 	}
 	string_concatenate_char_array(&command_string, "\r\n");
 
-	error = send_string(session->command_socket, &command_string, session->log_file);
+	error = send_string(session->command_socket, &command_string, &session->log);
 	if (error)
 	{
 		goto exit0;
@@ -1574,7 +1413,7 @@ status_t read_entire_response(session_t *session, string_t *response)
 	char *c_str = string_c_str(response);
 	printf("%s", c_str);
 	
-	error = write_received_message_to_log(session->log_file, response);
+	error = write_received_message_to_log(&session->log, response);
 	if (error)
 	{
 		goto exit0;
