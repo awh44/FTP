@@ -822,8 +822,9 @@ status_t handle_pasv_command(user_session_t *session, string_t *args, size_t len
 		goto exit0;
 	}
 
+	int listen_sock;
 	uint16_t listen_port;
-	error = set_up_listen_socket(&session->data_sock, &listen_port, AF_INET, session->server->ip4);
+	error = set_up_listen_socket(&listen_sock, &listen_port, AF_INET, session->server->ip4);
 	if (error)
 	{
 		goto exit0;
@@ -839,9 +840,19 @@ status_t handle_pasv_command(user_session_t *session, string_t *args, size_t len
 	error = send_response(session->command_sock, ENTERING_PASSIVE_MODE, string_c_str(&message), session->server->log, 0);
 	if (error)
 	{
-		goto exit1;
+		goto exit2;
 	}
 
+	struct sockaddr_in cad;
+	socklen_t clilen = sizeof cad;
+	session->data_sock = accept(listen_sock, (struct sockaddr *) &cad, &clilen);
+	if (session->data_sock < 0)
+	{
+		goto exit2;
+	}
+
+exit2:
+	close(listen_sock);
 exit1:
 	string_uninitialize(&message);
 exit0:
