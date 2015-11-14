@@ -51,6 +51,15 @@ typedef struct
 	account_t *accounts[ACCOUNT_BUCKETS];
 } accounts_table_t;
 
+/**
+  * Structure for holding the server configuration/information. Contains a
+  * reference to the accounts table, the log file, the address of the server,
+  * and various flags.
+  * accounts - the table of accounts on the server
+  * log - the log file on the server
+  * ip4 - the IPv4 address of the server
+  * ip6 - the IPv6 address of the server
+  */
 typedef struct
 {
 	accounts_table_t *accounts;
@@ -62,9 +71,8 @@ typedef struct
 /**
   * Structure for holding all the information a user thread needs for processing
   * command_sock - the socket over which the commands are sent
-  * log - the log file structure
+  * server - reference to the server configuration object
   * account - the user's account structure
-  * account - reference to the entire accounts data structure
   * logged_in - flag indicating whether user has successfully logged in
   * directory - the representation of the user's current working directory
   * data_sock - the socket over which data will be sent
