@@ -1,4 +1,5 @@
 #include <fcntl.h>
+#include <pthread.h>
 #include <stdio.h>
 #include <time.h>
 
@@ -18,7 +19,7 @@ status_t open_log_file(log_t *log, char *filename, uint8_t threaded)
 	if (threaded)
 	{
 		log->lock = malloc(sizeof *log->lock);
-		if (pthread_mutex_init(log->lock) != 0)
+		if (pthread_mutex_init(log->lock, NULL) != 0)
 		{
 			close(log->log_file);
 			printf("Could not initialize pthread mutex.\n");

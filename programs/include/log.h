@@ -1,6 +1,8 @@
 #ifndef __LOG_H__
 #define __LOG_H__
 
+#include <pthread.h>
+
 #include "status_t.h"
 #include "string_t.h"
 
