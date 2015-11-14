@@ -1,6 +1,5 @@
 #include <arpa/inet.h>
 #include <fcntl.h>
-#include <ifaddrs.h>
 #include <limits.h>
 #include <netdb.h>
 #include <stdint.h>
@@ -186,14 +185,6 @@ status_t passive_command(session_t *session);
   * @param session - the session object in which to set the flag
   */
 status_t extended_command(session_t *session);
-
-/**
-  * helpter function for port_command; sets up a listening socket in the current
-  * session, using internet protocol af and address address, setting
-  * listen_socket and port appropriately when finished
-  */
-status_t set_up_listen_socket(session_t *session, int *listen_socket, uint16_t
-	*listen_port, int af, char *address);
 
 /**
   *
@@ -943,8 +934,7 @@ status_t port_command(session_t *session, int *listen_socket)
 	}
 
 	uint16_t listen_port;
-	error = set_up_listen_socket(session, listen_socket, &listen_port, af,
-		address);
+	error = set_up_listen_socket(listen_socket, &listen_port, af, address);
 	if (error)
 	{
 		goto exit0;
@@ -971,20 +961,7 @@ status_t port_command(session_t *session, int *listen_socket)
 	}
 	else
 	{
-		string_assign_from_char_array(&args, session->ip4);
-		string_replace(&args, '.', ',');
-		string_concatenate_char_array(&args, ",");
-
-		uint8_t port_upper = listen_port / PORT_DIVISOR;
-		uint8_t port_lower = listen_port % PORT_DIVISOR;
-
-		//uint8_t <= 255, so can only have up to 3 digits (plus '\0')
-		char tmp[4];
-		sprintf(tmp, "%u", port_upper);
-		string_concatenate_char_array(&args, tmp);
-		string_concatenate_char_array(&args, ",");
-		sprintf(tmp, "%u", port_lower);
-		string_concatenate_char_array(&args, tmp);
+		create_comma_delimited_address(&args, session->ip4, listen_port);
 
 		MAKE_COMMAND_FROM_LITERAL(tmp_command, "PORT", &args);
 		memcpy(&command, &tmp_command, sizeof command);
@@ -1209,61 +1186,6 @@ status_t extended_command(session_t *session)
 	printf("Extended mode is now %s.\n", word);
 
 exit0:
-	return error;
-}
-
-status_t set_up_listen_socket(session_t *session, int *listen_socket, uint16_t
-	*listen_port, int af, char *address)
-{
-	status_t error = SUCCESS;
-
-	//create a TCP socket using the given protocol
-	*listen_socket = socket(af, SOCK_STREAM, 0);
-	if (*listen_socket < 0)
-	{
-		error = SOCKET_OPEN_ERROR;
-		goto exit_error0;
-	}
-
-	//use a sockaddr_in6 to supersed a sockaddr_in
-	struct sockaddr_in6 sad;
-	socklen_t size = sizeof sad;
-	memset(&sad, 0, size);
-	sad.sin6_family = af;
-	inet_pton(af, address, &sad.sin6_addr);
-
-	//bind the socket to a random available port (because sad.sin6_addr == 0)
-	if (bind(*listen_socket, (struct sockaddr *) &sad, size) < 0)
-	{
-		error = BIND_ERROR;
-		goto exit_error1;
-	}
-
-	//Make the socket listen
-	if (listen(*listen_socket, 1) < 0)
-	{
-		error = LISTEN_ERROR;
-		goto exit_error1;
-	}
-
-	//Get the socket name from the listen_sock to find out on which port it ended
-	//up listening
-	struct sockaddr_in port_sad;
-	if (getsockname(*listen_socket, (struct sockaddr *) &port_sad, &size) < 0)
-	{
-		error = SOCK_NAME_ERROR;
-		goto exit_error1;
-	}
-	*listen_port = ntohs(port_sad.sin_port);
-
-	//equivalent to return SUCCESS (and don't close the socket)
-	goto exit_success;
-
-exit_error1:
-	close(*listen_socket);
-
-exit_error0:
-exit_success:
 	return error;
 }
 

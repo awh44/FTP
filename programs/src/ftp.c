@@ -234,6 +234,7 @@ status_t try_set_hostname(struct ifaddrs *ifa, char **hostptr, size_t sockaddr_l
 		goto exit0;
 	}
 
+	printf("%s\n", host);
 	//Ignore localhosts
 	if (strcmp(host, localhost) != 0)
 	{
@@ -248,4 +249,76 @@ status_t try_set_hostname(struct ifaddrs *ifa, char **hostptr, size_t sockaddr_l
 
 exit0:
 	return error;
+}
+
+status_t set_up_listen_socket(int *listen_socket, uint16_t *listen_port, int af, char *address)
+{
+	status_t error = SUCCESS;
+
+	//create a TCP socket using the given protocol
+	*listen_socket = socket(af, SOCK_STREAM, 0);
+	if (*listen_socket < 0)
+	{
+		error = SOCKET_OPEN_ERROR;
+		goto exit_error0;
+	}
+
+	//use a sockaddr_in6 to supersed a sockaddr_in
+	struct sockaddr_in6 sad;
+	socklen_t size = sizeof sad;
+	memset(&sad, 0, size);
+	sad.sin6_family = af;
+	inet_pton(af, address, &sad.sin6_addr);
+
+	//bind the socket to a random available port (because sad.sin6_addr == 0)
+	if (bind(*listen_socket, (struct sockaddr *) &sad, size) < 0)
+	{
+		error = BIND_ERROR;
+		goto exit_error1;
+	}
+
+	//Make the socket listen
+	if (listen(*listen_socket, 1) < 0)
+	{
+		error = LISTEN_ERROR;
+		goto exit_error1;
+	}
+
+	//Get the socket name from the listen_sock to find out on which port it ended
+	//up listening
+	struct sockaddr_in port_sad;
+	if (getsockname(*listen_socket, (struct sockaddr *) &port_sad, &size) < 0)
+	{
+		error = SOCK_NAME_ERROR;
+		goto exit_error1;
+	}
+	*listen_port = ntohs(port_sad.sin_port);
+
+	//equivalent to return SUCCESS (and don't close the socket)
+	goto exit_success;
+
+exit_error1:
+	close(*listen_socket);
+
+exit_error0:
+exit_success:
+	return error;
+}
+
+void create_comma_delimited_address(string_t *args, char *address, uint16_t port)
+{
+	string_concatenate_char_array(args, address);
+	string_replace(args, '.', ',');
+	string_concatenate_char_array(args, ",");
+
+	uint8_t port_upper = port / PORT_DIVISOR;
+	uint8_t port_lower = port % PORT_DIVISOR;
+
+	//uint8_t <= 255, so can only have up to 3 digits (plus '\0')
+	char tmp[4];
+	sprintf(tmp, "%u", port_upper);
+	string_concatenate_char_array(args, tmp);
+	string_concatenate_char_array(args, ",");
+	sprintf(tmp, "%u", port_lower);
+	string_concatenate_char_array(args, tmp);
 }

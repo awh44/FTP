@@ -1,6 +1,8 @@
 #ifndef __FTP_H__
 #define __FTP_H__
 
+#include <ifaddrs.h>
+
 #include "log.h"
 #include "status_t.h"
 #include "string_t.h"
@@ -95,4 +97,19 @@ status_t get_ips(char **ip4, char **ip6);
 status_t try_set_hostname(struct ifaddrs *ifa, char **hostptr, size_t len,
 	char *localhost);
 
+/**
+  * helper function for port_command; sets up a listening socket in the current
+  * session, using internet protocol af and address address, setting
+  * listen_socket and port appropriately when finished
+  */
+status_t set_up_listen_socket(int *listen_socket, uint16_t
+	*listen_port, int af, char *address);
+
+/**
+  * Takes the C string address and the port number port and creates a comma
+  * delimited address of the form h1,h2,h3,h4,p1,p2 and concatenates it to args
+  * (note that this means that text can already exist in args and it will not be
+  * overwritten)
+  */
+void create_comma_delimited_address(string_t *args, char *address, uint16_t port);
 #endif

@@ -252,7 +252,6 @@ int main(int argc, char *argv[])
 	{
 		goto exit1;
 	}
-
 	accounts_table_t accounts;
 	error = get_accounts(&accounts);
 	if (error)
@@ -261,18 +260,29 @@ int main(int argc, char *argv[])
 	}
 	server.accounts = &accounts;
 
-	char socket_message[] = "Setting up socket.\n";
-	error = write_log(&log, socket_message, sizeof socket_message);
+	char ips[] = "Getting local ips.";
+	error = write_log(&log, ips, sizeof ips);
+	if (error)
+	{
+		goto exit2;
+	}
+	error = get_ips(&server.ip4, &server.ip6);
 	if (error)
 	{
 		goto exit2;
 	}
 
+	char socket_message[] = "Setting up socket.\n";
+	error = write_log(&log, socket_message, sizeof socket_message);
+	if (error)
+	{
+		goto exit3;
+	}
 	int listen_sock = socket(AF_INET, SOCK_STREAM, 0);
 	if (listen_sock < 0)
 	{
 		error = SOCKET_OPEN_ERROR;
-		goto exit2;
+		goto exit3;
 	}
 
 	struct sockaddr_in sad;
@@ -284,13 +294,13 @@ int main(int argc, char *argv[])
 	if (bind(listen_sock, (struct sockaddr *) &sad, sizeof sad) < 0)
 	{
 		error = BIND_ERROR;
-		goto exit3;
+		goto exit4;
 	}
 
 	if (listen(listen_sock, MAX_USERS) < 0)
 	{
 		error = LISTEN_ERROR;
-		goto exit3;
+		goto exit4;
 	}
 
 	struct sockaddr_in cad;
@@ -330,11 +340,14 @@ int main(int argc, char *argv[])
 	}
 
 	char closing_message[] = "Server closing down.\n";
-exit3:
+exit4:
 	write_log(&log, closing_message, sizeof closing_message);
 	close(listen_sock);
-exit2:
+exit3:
 	free_accounts(&accounts);
+exit2:
+	free(server.ip4);
+	free(server.ip6);
 exit1:
 	close_log_file(&log);
 exit0:
@@ -802,7 +815,37 @@ status_t handle_quit_command(user_session_t *session, string_t *args, size_t len
 
 status_t handle_pasv_command(user_session_t *session, string_t *args, size_t len)
 {
-	return handle_unrecognized_command(session, args, len);
+	status_t error = SUCCESS;
+	if (!session->logged_in)
+	{
+		send_530(session);
+		goto exit0;
+	}
+
+	uint16_t listen_port;
+	error = set_up_listen_socket(&session->data_sock, &listen_port, AF_INET, session->server->ip4);
+	if (error)
+	{
+		goto exit0;
+	}
+
+	string_t message;
+	string_initialize(&message);
+	string_assign_from_char_array(&message, "Entering passive mode (");
+	create_comma_delimited_address(&message, session->server->ip4, listen_port);
+	char_vector_push_back(&message, ')');
+	printf("%s\n", string_c_str(&message));
+
+	error = send_response(session->command_sock, ENTERING_PASSIVE_MODE, string_c_str(&message), session->server->log, 0);
+	if (error)
+	{
+		goto exit1;
+	}
+
+exit1:
+	string_uninitialize(&message);
+exit0:
+	return error;
 }
 
 status_t handle_epsv_command(user_session_t *session, string_t *args, size_t len)
