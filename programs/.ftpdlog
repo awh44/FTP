@@ -5,6 +5,6 @@ numlogfiles=5
 nextlognum=010
 #Please skip
 #no don u red dis
-usernamefile=config/accountsssssssss
+usernamefile=config/accounts
 port_mode=YES
 pasv_mode=YES
