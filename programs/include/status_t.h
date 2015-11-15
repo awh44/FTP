@@ -1,8 +1,6 @@
 #ifndef __STATUS_T_H__
 #define __STATUS_T_H__
 
-#include "log.h"
-
 typedef enum
 {
 	SUCCESS = 0,
@@ -53,6 +51,4 @@ void print_error_message(status_t error);
   * @param error - the error code
   * @param log - the log file to which to write
   */
-//void print_and_log_error_message(status_t error, log_t *log);
-
 #endif

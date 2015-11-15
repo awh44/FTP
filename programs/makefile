@@ -6,7 +6,7 @@ PROG_OPTS=$(COMMON_OPTS) $(OPTIONS) $^
 
 all: ftpserver ftpclient
 
-ftpserver: bin/ftpserver.o $(COMMON_DEPENDENCIES)
+ftpserver: bin/ftpserver.o $(COMMON_DEPENDENCIES) bin/server.o bin/accounts.o
 	$(CC) $(PROG_OPTS) -lpthread 
 
 ftpclient: bin/ftpclient.o $(COMMON_DEPENDENCIES)
@@ -21,10 +21,16 @@ bin/ftpclient.o: src/ftpclient.c
 bin/ftp.o: src/ftp.c
 	$(CC) $(BIN_OPTS)
 
+bin/server.o: src/server.c
+	$(CC) $(BIN_OPTS)
+
 bin/string_t.o: src/string_t.c
 	$(CC) $(BIN_OPTS)
 
 bin/status_t.o: src/status_t.c
+	$(CC) $(BIN_OPTS)
+
+bin/accounts.o: src/accounts.c
 	$(CC) $(BIN_OPTS)
 
 bin/log.o: src/log.c

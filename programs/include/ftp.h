@@ -112,4 +112,14 @@ status_t set_up_listen_socket(int *listen_socket, uint16_t
   * overwritten)
   */
 void create_comma_delimited_address(string_t *args, char *address, uint16_t port);
+
+/**
+  * Performs a strcmp and returns true if the result is 0, false otherwise
+  * @param s1 - the first string to compare
+  * @param s2 - the second string to compare
+  * @return true if s1's bytes are equal to s2's bytes, up to the first null
+  * 	terminator
+  */
+uint8_t bool_strcmp(char *s1, char *s2);
+
 #endif

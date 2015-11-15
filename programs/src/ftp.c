@@ -321,3 +321,9 @@ void create_comma_delimited_address(string_t *args, char *address, uint16_t port
 	sprintf(tmp, "%u", port_lower);
 	string_concatenate_char_array(args, tmp);
 }
+
+uint8_t bool_strcmp(char *s1, char *s2)
+{
+	return strcmp(s1, s2) == 0;
+}
+

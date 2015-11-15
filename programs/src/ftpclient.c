@@ -258,15 +258,6 @@ uint8_t matches_code(string_t *response, char *code);
   * @return true if the n first bytes of n1 and n2 ar the same
   */
 uint8_t bool_memcmp(char *s1, char *s2, size_t n);
-
-/**
-  * Performs a strcmp and returns true if the result is 0, false otherwise
-  * @param s1 - the first string to compare
-  * @param s2 - the second string to compare
-  * @return true if s1's bytes are equal to s2's bytes, up to the first null
-  * 	terminator
-  */
-uint8_t bool_strcmp(char *s1, char *s2);
 //----------------------------END HELPER FUNCTIONS------------------------------
 
 int main(int argc, char *argv[])
@@ -1432,9 +1423,4 @@ uint8_t matches_code(string_t *response, char *code)
 uint8_t bool_memcmp(char *s1, char *s2, size_t n)
 {
 	return memcmp(s1, s2, n) == 0;
-}
-
-uint8_t bool_strcmp(char *s1, char *s2)
-{
-	return strcmp(s1, s2) == 0;
 }

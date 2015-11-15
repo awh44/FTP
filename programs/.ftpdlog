@@ -2,9 +2,8 @@
 logdirectory=logs
 #Ignore this
 numlogfiles=5
-nextlognum=010
+nextlognum=011
 #Please skip
-#no don u red dis
 usernamefile=config/accounts
 port_mode=YES
 pasv_mode=YES
