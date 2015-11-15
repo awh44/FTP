@@ -63,6 +63,7 @@ status_t initialize_server(server_t *server)
 			{
 				//If value is set to NULL, The line did not contain an equals sign,
 				//so return an error
+				printf("Parameter in configuration file is missing associated value.\n");
 				error = CONFIG_FILE_ERROR;
 				goto exit1;
 			}
@@ -94,23 +95,22 @@ status_t initialize_server(server_t *server)
 			}
 			else if (bool_strcmp(param, USER_FILE_PARAM))
 			{
-				printf("param: %s, value: %s\n", param, value);
-				server->accounts = malloc(sizeof *server->accounts);
-				if (server->accounts == NULL)
+				accounts_table_t *accounts = malloc(sizeof *server->accounts);
+				if (accounts == NULL)
 				{
 					error = MEMORY_ERROR;
 					goto exit1;
 				}
 
-				error = get_accounts(value, server->accounts);
+				error = get_accounts(value, accounts);
 				if (error)
 				{
-					perror("Could not blah");
-					printf("Could not get users from username file.\n");
+					free(accounts);
 					print_error_message(error);
 					error = CONFIG_FILE_ERROR;
 					goto exit1;
 				}
+				server->accounts = accounts;
 			}
 			else if (bool_strcmp(param, PORT_MODE_PARAM))
 			{
@@ -123,6 +123,16 @@ status_t initialize_server(server_t *server)
 			else if (bool_strcmp(param, PASV_MODE_PARAM))
 			{
 				error = port_pasv_param(&server->pasv_enabled, value, PASV_MODE_PARAM);
+				if (error)
+				{
+					goto exit1;
+				}
+			}
+			else
+			{
+				printf("Unrecognized parameter ('%s') in the configuration file.\n", param);
+				error = CONFIG_FILE_ERROR;
+				goto exit1;
 			}
 		}
 	}

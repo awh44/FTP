@@ -24,7 +24,6 @@ status_t get_accounts(char *filename, accounts_table_t *accounts)
 
 	memset(accounts->accounts, 0, ACCOUNT_BUCKETS * sizeof *accounts->accounts);
 
-	printf("Trying to open file: %s\n", filename);
 	int file = open(filename, O_RDONLY, 0);
 	if (file < 0)
 	{
@@ -85,6 +84,7 @@ exit2:
 	string_uninitialize(&password);
 	string_uninitialize(&username);
 exit1:
+	string_uninitialize(&num_entries_str);
 	close(file);
 exit0:
 	return error;
