@@ -13,7 +13,7 @@ char *get_error_message(status_t error)
 			//let specific cases handle in main
 			return "";
 		case FILE_OPEN_ERROR:
-			return "Could not open file for writing.";
+			return "Could not open file.";
 		case FILE_WRITE_ERROR:
 			return "Could not write to log file.";
 		case SOCKET_OPEN_ERROR:
@@ -56,6 +56,8 @@ char *get_error_message(status_t error)
 			return "Socket end of file reached.";
 		case REALPATH_ERROR:
 			return "Could not determine path.";
+		case CONFIG_FILE_ERROR:
+			return "";
 		default:
 			return "Unknown error";
 	}
@@ -64,7 +66,7 @@ char *get_error_message(status_t error)
 void print_error_message(status_t error)
 {
 	char *error_message = get_error_message(error);
-	if (error_message != "")
+	if (strcmp(error_message, "") != 0)
 		printf("%s\n", error_message);
 }
 

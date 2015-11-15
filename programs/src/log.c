@@ -1,16 +1,27 @@
+#include <dirent.h>
 #include <fcntl.h>
 #include <pthread.h>
 #include <stdio.h>
 #include <time.h>
 
+#define LOG_FILE_NAME "/logfile."
+#define LOG_FILE_NAME_LEN (sizeof LOG_FILE_NAME - 1)
+
 #include "log.h"
 #include "status_t.h"
 
+status_t open_log_file_clobber_opt(log_t *log, char *filename, uint8_t threaded, uint8_t clobber);
+
 status_t open_log_file(log_t *log, char *filename, uint8_t threaded)
+{
+	return open_log_file_clobber_opt(log, filename, threaded, 0);
+}
+
+status_t open_log_file_clobber_opt(log_t *log, char *filename, uint8_t threaded, uint8_t clobber)
 {
 	//Create the file if it doesn't exist, and always append new logs to the end
 	//of the file
-	if ((log->log_file = open(filename, O_WRONLY | O_CREAT | O_APPEND, 0600)) < 0)
+	if ((log->log_file = open(filename, O_WRONLY | O_CREAT | (clobber ? O_TRUNC : O_APPEND), 0600)) < 0)
 	{
 		printf("Could not open log file.\n");
 		return FILE_OPEN_ERROR;
@@ -32,6 +43,44 @@ status_t open_log_file(log_t *log, char *filename, uint8_t threaded)
 	}
 
 	return SUCCESS;
+
+}
+
+status_t open_log_file_in_dir(log_t *log, char *dirname, int files_to_keep, int next_log_num, uint8_t threaded)
+{
+	status_t error = SUCCESS;
+
+	string_t generic_filename;
+	string_initialize(&generic_filename);
+	string_assign_from_char_array(&generic_filename, dirname);
+	string_concatenate_char_array(&generic_filename, LOG_FILE_NAME);
+	
+	//plus 1 for the '\0'
+	char next_string[LOG_FILE_EXT_LEN + 1];
+	sprintf(next_string, "%03d", next_log_num);
+
+	string_t opening_name;
+	string_initialize(&opening_name);
+	char_vector_copy(&opening_name, &generic_filename);
+	string_concatenate_char_array(&opening_name, next_string);
+
+	error = open_log_file_clobber_opt(log, string_c_str(&opening_name), threaded, 1);
+	if (error)
+	{
+		goto exit0;
+	}
+
+	if (files_to_keep > 0)
+	{
+		sprintf(next_string, "%03d", (next_log_num - files_to_keep + MAX_LOG_FILES) % MAX_LOG_FILES);
+		string_concatenate_char_array(&generic_filename, next_string);
+		unlink(string_c_str(&generic_filename));
+	}
+
+exit0:
+	string_uninitialize(&opening_name);
+	string_uninitialize(&generic_filename);
+	return error;
 }
 
 status_t close_log_file(log_t *log)

@@ -2,7 +2,7 @@ CC=gcc
 COMMON_OPTS=-Iinclude/ -o$@ $(DEBUG)
 COMMON_DEPENDENCIES=bin/ftp.o bin/string_t.o bin/status_t.o bin/log.o
 BIN_OPTS=$(COMMON_OPTS) -c $^
-PROG_OPTS=$(COMMON_OPTS) $^
+PROG_OPTS=$(COMMON_OPTS) $(OPTIONS) $^
 
 all: ftpserver ftpclient
 

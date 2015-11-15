@@ -6,6 +6,9 @@
 #include "status_t.h"
 #include "string_t.h"
 
+#define MAX_LOG_FILES 1000
+#define LOG_FILE_EXT_LEN 3
+
 typedef struct
 {
 	int log_file;
@@ -18,6 +21,11 @@ typedef struct
   * @param filename - the file name to use for the log file
   */
 status_t open_log_file(log_t *log, char *filename, uint8_t threaded);
+
+/**
+  * 
+  */
+status_t open_log_file_in_dir(log_t *log, char *directory, int files_to_keep, int next_log_num, uint8_t threaded);
 
 /**
   * close the given log file out

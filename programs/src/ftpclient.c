@@ -452,8 +452,6 @@ status_t do_session(session_t *session)
 			error = NON_FATAL_ERROR;
 		}
 
-		print_error_message(error);
-
 		size_t i = 0;
 		for (i = 0; i < array_length; i++)
 		{

@@ -3,4 +3,4 @@ ftpclient
 ftpserver
 bin/
 *.swp
-log
+logs/

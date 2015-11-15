@@ -234,7 +234,6 @@ status_t try_set_hostname(struct ifaddrs *ifa, char **hostptr, size_t sockaddr_l
 		goto exit0;
 	}
 
-	printf("%s\n", host);
 	//Ignore localhosts
 	if (strcmp(host, localhost) != 0)
 	{

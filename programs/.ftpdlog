@@ -1,0 +1,10 @@
+#This is a comment
+logdirectory=logs
+#Ignore this
+numlogfiles=5
+nextlognum=010
+#Please skip
+#no don u red dis
+usernamefile=config/accountsssssssss
+port_mode=YES
+pasv_mode=YES
