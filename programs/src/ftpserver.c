@@ -643,6 +643,8 @@ status_t handle_port_command(user_session_t *session, string_t *args, size_t len
 	status_t error;
 	if (!session->server->port_enabled)
 	{
+		//This command can't actually send back a 'not implemented' response, so
+		//approximate it with an "unrecognized command" response
 		error = send_500(session);
 		goto exit0;
 	}
