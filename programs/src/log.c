@@ -23,7 +23,6 @@ status_t open_log_file_clobber_opt(log_t *log, char *filename, uint8_t threaded,
 	//of the file
 	if ((log->log_file = open(filename, O_WRONLY | O_CREAT | (clobber ? O_TRUNC : O_APPEND), 0600)) < 0)
 	{
-		printf("Could not open log file.\n");
 		return FILE_OPEN_ERROR;
 	}
 

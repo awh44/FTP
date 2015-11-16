@@ -1,3 +1,52 @@
+Security assignment:
+	The server was coded on a Linux (Ubuntu) system and compiled using gcc. The
+	given makefile can be used to compile the program. Particularly, type:
+		make [ftpserver]
+	Since the last assignment, the ftpserver , has now been modified so that it
+	must now be run as:
+		ftpserver port
+	because the logfile is now specified in the configuration file.
+
+	A few notes on the configuration file:
+		-It should be located in the current directory with the name ".ftpdlog"
+		-It follows the specification given in the assignment, i.e.:
+			*Lines beginning with '#' are comments
+			*The parameters "logdirectory," "numlogfiles," "usernamefile,"
+				"port_mode," and "pasv_mode" are supported
+		-The default directory for log files is under the current directory in
+			the directory "log"
+		-Log files are restricted to 1000 or less (i.e., 000-999, before they
+			wrap back around to 000)
+		-An additional parameter has been added to the configuration file,
+			namely, "nextlognum"
+			*This parameter keeps track of the next log file number to be used
+			*It is re-written by the server program every time it successfully
+				opens a log file, wrapping around to 000 after it hits 999
+			*This can be modified manually, but it likely should not be. If it
+				is, the format is a three-digit number in the range [000, 999]
+		-The "numlogfiles" parameter is handled by simply deleting the file that
+			is the current number minus numlogfiles
+			*For example, if the current number is 5 and the numlogfiles
+				parameter is 5, then logfile.000 is deleted
+			*This works using modular arithmetic so, for example, if current
+				number is 0 and number to keep is 5, then 995 is deleted
+
+	The samples directory contains examples of the port_mode and pasv_mode
+	being set in different comibnations. Each file contains an example of one
+	user (the client for this assignment) connecting, doing an "ls" command
+	with PORT then an "ls" command with PASV; this user then disconnects, and
+	another user (the released FTP client) connects and does the same.  The
+	files are samples/pasv_off, samples/port_off, and samples/both_on. (One
+	thing to note here is that 502 status code ("not implemented") is not an
+	accetable response from PORT, according to RFC 959, so instead, 500
+	("command not recognized") is used instead when port_mode is set to "NO".)
+
+	Also note that most of the functionality for this assignment is contained
+	in the file src/server.c (with definitions in its corresponding
+	include/server.h file), though a "open_log_file_in_dir" function was added
+	to src/log.c
+
+
 Server:
 	To compile the program, use:
 		make [ftpserver]
@@ -41,16 +90,16 @@ Client:
 
 	Here is a list of the available commands and their formats, where [] parts are
 	optional and all else is required.
-		cd directory - sends CWD directory to server
-		cdup - sends CDUP to server
-		ls [file or directory name] - sends LIST or LIST of file/dir name
-		get server_file [local file]
-		pwd - sends PWD to server
-		help [help list] - sends HELP to the server
-		quit - sends QUIT to the server and shuts the program down
-		passive - toggles the "passive" flag, i.e., whether to use PASV (in passive
+		-cd directory - sends CWD directory to server
+		-cdup - sends CDUP to server
+		-ls [file or directory name] - sends LIST or LIST of file/dir name
+		-get server_file [local file]
+		-pwd - sends PWD to server
+		-help [help list] - sends HELP to the server
+		-quit - sends QUIT to the server and shuts the program down
+		-passive - toggles the "passive" flag, i.e., whether to use PASV (in passive
 			mode) or PORT (in non-passive/active mode) Upon logging in, defaults to PORT first
-		extended - "extended" flag; if true, forces the use of IPv6 for EPSV and
+		-extended - "extended" flag; if true, forces the use of IPv6 for EPSV and
 			EPRT. Defaults first to false and then to either true or false depending
 			on whether the client program could find any IPv4 or IPv6 addresses
 

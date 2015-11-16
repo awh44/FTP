@@ -26,6 +26,9 @@ status_t port_pasv_param(int8_t *server_val, char *value, char *param);
 status_t initialize_server(server_t *server)
 {
 	status_t error = SUCCESS;
+
+	//Initialize these all to NULL so they can be safely free'd no matter what,
+	//even if this function falls
 	server->accounts = NULL;
 	server->log = NULL;
 	server->ip4 = NULL;
@@ -39,6 +42,8 @@ status_t initialize_server(server_t *server)
 		goto exit0;
 	}
 
+	//Initialize all the integer variables to -1 so that it can be determined whether
+	//or not they've been seen when parsing is over
 	char *log_dir = NULL; //so it's safe to free
 	int files_to_keep = -1;
 	long int next_log_num_pos = -1;
@@ -70,6 +75,9 @@ status_t initialize_server(server_t *server)
 
 			if (bool_strcmp(param, LOG_DIR_PARAM))
 			{
+				//Need to know both the log dir and the numlogfiles to keep before
+				//opening the log, so save this in a temporary value until the entire
+				//config file has been parse
 				log_dir = strdup(value);
 			}
 			else if (bool_strcmp(param, NUM_LOGS_PARAM))
@@ -106,7 +114,7 @@ status_t initialize_server(server_t *server)
 				if (error)
 				{
 					free(accounts);
-					print_error_message(error);
+					printf("Could not open username file: %s.\n", value);
 					error = CONFIG_FILE_ERROR;
 					goto exit1;
 				}
@@ -130,16 +138,29 @@ status_t initialize_server(server_t *server)
 			}
 			else
 			{
+				//Don't just ignore unrecognized parameters - treat them like an error in case
+				//it means someone has been trying to modify the config file when they should not
 				printf("Unrecognized parameter ('%s') in the configuration file.\n", param);
 				error = CONFIG_FILE_ERROR;
 				goto exit1;
 			}
 		}
-	}
+	}	
 
+	//Set up the log current log file in this block--------------------------------------
+	//assign the log to a temporary variable until it is known that completely opening the
+	//log was successful
 	if (log_dir == NULL)
 	{
+		//If no log directory was found, then use the default.
 		log_dir = strdup(DEFAULT_LOG_DIR);
+	}
+
+	if (next_log_num < 0)
+	{
+		printf("Could not find the '%s' parameter.\n", NEXT_LOG_NUM_PARAM);
+		error = CONFIG_FILE_ERROR;
+		goto exit1;
 	}
 
 	log_t *log = malloc(sizeof *log);
@@ -148,22 +169,38 @@ status_t initialize_server(server_t *server)
 		error = MEMORY_ERROR;
 		goto exit1;
 	}
+
+	//Open up a log file in the given directory, keeping files_to_keep files, using next_log_num
+	//as the suffix of the file, and making sure it's thread safe
 	error = open_log_file_in_dir(log, log_dir, files_to_keep, next_log_num, 1);
 	if (error)
 	{
 		printf("Error opening log file.\n");
 		free(log);
-		goto exit1;
-	}
-	server->log = log;
-	if (fseek(file, next_log_num_pos, SEEK_SET) < 0)
-	{
 		error = CONFIG_FILE_ERROR;
 		goto exit1;
 	}
-	next_log_num = (next_log_num + 1) % MAX_LOG_FILES;
-	fprintf(file, "%03d", next_log_num);
 
+	//The log has been set up successfully, so it's safe to assign it to the server object
+	server->log = log;
+
+	//Move to the position of the next log number in the config file
+	if (fseek(file, next_log_num_pos, SEEK_SET) < 0)
+	{
+		printf("Could not seek in configuration file.\n");
+		error = CONFIG_FILE_ERROR;
+		goto exit1;
+	}
+
+	//Get the next log number by adding one but modding by the max number of files, because the logs
+	//are limited
+	next_log_num = (next_log_num + 1) % MAX_LOG_FILES;
+	//Replace the next log number in the config file
+	fprintf(file, "%03d", next_log_num);
+	//-----------------------------------------------------------------------------------
+
+	//Both parameters must be specified, so if either is less than zero, it was not found,
+	//and an error has occurred.
 	if (server->port_enabled < 0 || server->pasv_enabled < 0)
 	{
 		printf("The '%s' and '%s' parameters must both be set in the config file.", PORT_MODE_PARAM, PASV_MODE_PARAM);
@@ -171,6 +208,7 @@ status_t initialize_server(server_t *server)
 		goto exit1;
 	}
 
+	//Similarly, if both are turned off, there is no way to transfer files, so again return an error
 	if (!server->port_enabled && !server->pasv_enabled)
 	{
 		printf("Either PORT or PASV must be enabled.\n");
@@ -178,6 +216,7 @@ status_t initialize_server(server_t *server)
 		goto exit1;
 	}
 
+	//Get the local IPs to use in PASV commands------------------------------------------
 	char ips[] = "Getting local ips.";
 	error = write_log(server->log, ips, sizeof ips);
 	if (error)
@@ -189,6 +228,7 @@ status_t initialize_server(server_t *server)
 	{
 		goto exit1;
 	}
+	//-----------------------------------------------------------------------------------
 
 exit1:
 	free(log_dir);
